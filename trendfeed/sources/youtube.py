@@ -117,6 +117,13 @@ def collect(cfg: dict, fetch) -> CollectResult:
     return CollectResult(list(records.values()), problems)
 
 
+def description(cfg: dict, fetch, video_id: str) -> str:
+    """영상 설명란(실탐에서 읽는다). 할당량 1."""
+    data = _call(cfg, fetch, _key(), {"id": video_id, "maxResults": 1})
+    items = data.get("items") or []
+    return ((items[0].get("snippet") or {}).get("description") or "") if items else ""
+
+
 def top_comments(cfg: dict, fetch, key: str, video_id: str) -> list[str] | None:
     """영상의 댓글 위에서 몇 개(관련순)의 글자. 댓글이 막힌 영상은 None.
 

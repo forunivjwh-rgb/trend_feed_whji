@@ -87,12 +87,41 @@ def _read_wikipedia(e, cfg, sources, fetch):
     return body, f"문서 본문 {'앞 ' if cut else ''}{len(body):,}자"
 
 
+def _read_youtube(e, cfg, sources, fetch):
+    """설명란과 댓글 위 20개(관련순). 자막은 영상 주인만 받을 수 있어 읽지 않는다."""
+    from .sources import youtube
+
+    yt_cfg = sources[e["source"]]
+    desc, _ = _clip(youtube.description(yt_cfg, fetch, e["external_id"]).strip(), cfg["max_chars"])
+    comments = youtube.top_comments({**yt_cfg, "comments_per_video": cfg["comments"]}, fetch, youtube._key(),
+                                    e["external_id"]) or []
+    parts, scope = [], []
+    if desc:
+        parts.append(f"[설명란]\n{desc}")
+        scope.append(f"설명란 {len(desc):,}자")
+    if comments:
+        joined, _ = _clip("\n- ".join(" ".join(c.split()) for c in comments), cfg["max_chars"])
+        parts.append(f"[댓글]\n- {joined}")
+        scope.append(f"댓글 상위 {len(comments)}")
+    return "\n\n".join(parts), " · ".join(scope)
+
+
+def _read_geeknews(e, cfg, sources, fetch):
+    """글 페이지는 자동 읽기를 거절(403)해서, 피드에 든 요약 본문을 읽는다."""
+    from .sources import geeknews
+
+    xml = fetch.get_text(sources[e["source"]]["feed_url"])
+    body, cut = _clip(html_to_text(geeknews.summary_of(xml, e["external_id"])), cfg["max_chars"])
+    return body, f"GeekNews 요약 {'앞 ' if cut else ''}{len(body):,}자"
+
+
 READERS = {
     "hackernews": _read_hackernews,
     "github_trending": _read_github,
     "huggingface": _read_huggingface,
     "wikipedia": _read_wikipedia,
-    # GeekNews 는 글 페이지가 자동 읽기를 거절(403)해서 읽지 않는다. 유튜브는 아직 읽는 법이 없다.
+    "youtube": _read_youtube,
+    "geeknews": _read_geeknews,
 }
 
 
