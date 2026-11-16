@@ -111,3 +111,10 @@ api_base = "https://www.googleapis.com/youtube/v3"
 regions = ["KR"]             # 어느 나라의 인기 차트를 볼지
 limit = 250                  # 하루에 모으는 영상 수 (명세 3번). 차트가 그보다 짧으면 있는 만큼
 follow_days = 2              # 차트에서 빠진 영상도 이 날수만큼은 숫자를 다시 적는다. 0이면 끔
+# 댓글에서 반복되는 말 세기 (명세 4번). 댓글 원문은 저장하지 않고 센 결과만 남긴다.
+comments_per_video = 20      # 영상마다 읽는 댓글 수(관련순). 0이면 댓글을 읽지 않는다. 영상 하나에 할당량 1
+comment_workers = 8          # 동시에 읽는 영상 수
+phrase_min_comments = 3      # 서로 다른 댓글 이만큼에 나와야 "반복되는 말"로 친다
+phrase_max_words = 3         # 몇 단어짜리 말까지 볼지
+phrase_min_chars = 3         # 이보다 짧은 말은 세지 않는다(ㅋㅋ 같은 것)
+phrase_top = 5               # 영상마다 남기는 말의 수

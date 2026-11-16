@@ -5,17 +5,18 @@
 
 숫자는 조회수(주 숫자), 좋아요 수, 댓글 수다. 한 번 부르는 데 할당량 1을 쓴다(하루 한도 10,000).
 이 차트는 2025-07-21부터 음악·영화·게임 차트의 영상으로 채워진다(명세 4번).
-댓글 본문은 여기서 읽지 않는다.
+영상마다 댓글 위에서 20개(관련순)를 읽어 여러 댓글에 반복되는 말만 세고, 댓글 원문은 저장하지 않는다.
 """
 
 from __future__ import annotations
 
 import json
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from .. import config
+from .. import config, phrases
 from . import CollectResult, Record, SourceProblem
 
 KEY_NAME = "YOUTUBE_API_KEY"
@@ -112,7 +113,62 @@ def collect(cfg: dict, fetch) -> CollectResult:
             if not data.get("nextPageToken"):
                 break
             params = {**params, "pageToken": data["nextPageToken"]}
-    return CollectResult(list(records.values()))
+    problems = _add_comment_phrases(cfg, fetch, key, list(records.values()))
+    return CollectResult(list(records.values()), problems)
+
+
+def top_comments(cfg: dict, fetch, key: str, video_id: str) -> list[str] | None:
+    """영상의 댓글 위에서 몇 개(관련순)의 글자. 댓글이 막힌 영상은 None.
+
+    받은 글자는 실행 중에만 쓰고 어디에도 저장하지 않는다. 한 번 부르는 데 할당량 1.
+    """
+    query = urlencode({"part": "snippet", "videoId": video_id, "order": "relevance",
+                       "maxResults": cfg["comments_per_video"], "textFormat": "plainText"})
+    try:
+        data = fetch.get_json(f"{cfg['api_base']}/commentThreads?{query}", headers={"X-Goog-Api-Key": key})
+    except urllib.error.HTTPError as e:
+        message = _explain(e)
+        if "한도" in message or "API 키" in message:  # 더 불러 봐야 소용없는 경우
+            raise SourceProblem(message) from None
+        return None  # 댓글 사용 중지 등: 이 영상만 건너뛴다
+    texts = []
+    for item in data.get("items", []):
+        snippet = (((item.get("snippet") or {}).get("topLevelComment") or {}).get("snippet")) or {}
+        text = snippet.get("textOriginal") or snippet.get("textDisplay")
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _add_comment_phrases(cfg: dict, fetch, key: str, records: list[Record]) -> list[str]:
+    """영상마다 댓글에서 반복되는 말을 세어 그날의 숫자 옆에 적는다(명세 4번). 원문은 버린다."""
+    if not cfg.get("comments_per_video"):
+        return []
+    stopped: list[str] = []
+
+    def one(rec: Record):
+        if stopped:
+            return
+        try:
+            texts = top_comments(cfg, fetch, key, rec.external_id)
+        except SourceProblem as e:
+            stopped.append(str(e))
+            return
+        except Exception:
+            return
+        if texts is None:
+            return
+        rec.snap_extra["comments_read"] = len(texts)
+        found = phrases.repeated(
+            texts, max_words=cfg["phrase_max_words"], min_comments=cfg["phrase_min_comments"],
+            top=cfg["phrase_top"], min_chars=cfg["phrase_min_chars"],
+        )
+        if found:
+            rec.snap_extra["comment_phrases"] = found
+
+    with ThreadPoolExecutor(max_workers=cfg["comment_workers"]) as pool:
+        list(pool.map(one, records))
+    return [f"댓글 읽기를 멈춤 — {stopped[0]}"] if stopped else []
 
 
 def refetch(cfg: dict, fetch, external_ids: list[str]) -> CollectResult:

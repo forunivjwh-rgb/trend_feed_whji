@@ -115,6 +115,10 @@ def _card(e: dict, sources: dict) -> str:
     tiles = "".join(f'<div class="num"><span class="small">{escape(l)}</span><b>{escape(v)}</b></div>' for l, v in nums)
     desc = e["item_extra"].get("description")
     desc_html = f'<p class="sub" style="color:var(--text-primary)">{escape(desc)}</p>' if desc else ""
+    repeated = e["extra"].get("comment_phrases")
+    if repeated:  # 유튜브: 댓글 여러 개에 반복되는 말 (코드가 센 것)
+        said = " · ".join(f'{p["text"]} ({p["count"]})' for p in repeated)
+        desc_html += f'<p class="sub">댓글에서 반복되는 말: {escape(said)}</p>'
     discuss = e["item_extra"].get("discuss_url")
     discuss_html = (
         f' · <a href="{escape(discuss, quote=True)}" target="_blank" rel="noopener noreferrer">댓글 보기</a>'
