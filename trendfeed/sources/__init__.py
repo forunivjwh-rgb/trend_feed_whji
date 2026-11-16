@@ -29,12 +29,13 @@ class CollectResult:
 
 def registry() -> dict:
     """수집 코드 모음. 설정 파일의 [sources.이름]은 같은 이름(또는 module 값)의 코드를 쓴다."""
-    from . import github_trending, hackernews, huggingface
+    from . import geeknews, github_trending, hackernews, huggingface
 
     return {
         "hackernews": hackernews,
         "github_trending": github_trending,
         "huggingface": huggingface,
+        "geeknews": geeknews,
     }
 
 

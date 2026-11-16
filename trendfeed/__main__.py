@@ -192,7 +192,7 @@ def _rank(settings: dict, top: int, day: str | None) -> int:
     print()
     for e in ranked[:top]:
         print(f'{e["place"]:>2}. 보통의 {e["times_typical"]:.1f}배  [{settings["sources"][e["source"]]["label"]}] {e["title"][:60]}')
-        print(f'      하루 +{e["velocity"]:,.0f}{e["unit"]} ({e["basis"]}) · {_numbers(e)}')
+        print(" · ".join(filter(None, [f'      하루 +{e["velocity"]:,.0f}{e["unit"]} ({e["basis"]})', _numbers(e)])))
     return 0
 
 

@@ -63,3 +63,11 @@ field = "AI"
 weight = 1.0
 api_base = "https://huggingface.co/api"
 limit = 40                   # 인기 모델 위에서 몇 개 (명세 3번)
+
+[sources.geeknews]
+enabled = true
+label = "GeekNews"
+code = "GN"
+field = "한국 IT"
+weight = 1.0
+feed_url = "https://news.hada.io/rss/news"   # RSS 전체 (명세 3번). 표결이 없어 등장 횟수로 센다
