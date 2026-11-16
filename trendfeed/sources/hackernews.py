@@ -13,6 +13,9 @@ from . import CollectResult, Record
 
 DISCUSS_URL = "https://news.ycombinator.com/item?id={id}"
 
+# 하루 증가량을 잴 때 보는 숫자 (rank.py)
+VELOCITY = {"metric": "score", "unit": "점"}
+
 
 def origin_of(url: str | None, author: str | None) -> str | None:
     """출처. 링크가 있으면 그 사이트, 없으면(Ask HN 등) 글쓴이.

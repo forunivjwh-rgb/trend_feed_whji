@@ -13,6 +13,9 @@ from html.parser import HTMLParser
 
 from . import CollectResult, Record
 
+# 하루 증가량을 잴 때 보는 숫자 (rank.py). GitHub는 오늘·이번 주에 늘어난 별을 직접 알려 준다.
+VELOCITY = {"metric": "stars", "unit": "별", "reported_daily": "stars_daily", "reported_weekly": "stars_weekly"}
+
 _REPO_HREF = re.compile(r"^/([^/\s]+)/([^/\s]+)$")
 _PERIOD_STARS = re.compile(r"([\d,]+)\s+stars?\s+(?:today|this\s+week|this\s+month)")
 

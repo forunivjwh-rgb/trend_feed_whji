@@ -47,6 +47,7 @@ def rows(conn, sql, *args):
 class DailyRunTest(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
+        self.addCleanup(self.conn.close)
 
     def run_day(self, day, fetch):
         return {s["source"]: s for s in collect_all(SETTINGS, self.conn, day, fetch=fetch)}

@@ -16,7 +16,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, schedule
+from . import config, db, rank, schedule
 from .run import STATUS_LABEL, collect_all
 from .sources import registry
 
@@ -33,6 +33,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("status", help="쌓인 기록과 오늘 모은 것을 보여 준다")
     p.add_argument("--top", type=int, default=5, help="소스마다 보여 줄 항목 수")
+
+    p = sub.add_parser("rank", help='"지금 인기" 순위를 글자로 본다')
+    p.add_argument("--top", type=int, default=10, help="보여 줄 항목 수")
+    p.add_argument("--date", help="이 날짜 기준 (기본: 오늘)")
 
     p = sub.add_parser("install-schedule", help="매일 자동 실행을 등록한다(윈도우·맥)")
     p.add_argument("--print", action="store_true", dest="print_only", help="등록하지 않고 내용만 본다")
@@ -52,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
         return _collect(settings, args.source)
     if args.command == "status":
         return _status(settings, args.top)
+    if args.command == "rank":
+        return _rank(settings, args.top, args.date)
     if args.command == "install-schedule":
         return _install_schedule(settings, args.print_only, args.os)
     if args.command == "uninstall-schedule":
@@ -150,13 +156,31 @@ def _status(settings: dict, top: int) -> int:
     return 0
 
 
+def _rank(settings: dict, top: int, day: str | None) -> int:
+    conn = db.connect(config.db_path(settings))
+    day = day or conn.execute("SELECT MAX(date) FROM item_snapshots").fetchone()[0]
+    if day is None:
+        print("아직 저장된 것이 없습니다.")
+        return 0
+    ranked = rank.now_popular(conn, day, settings)
+    print(f'[{day}] 지금 인기 · 기준선 {rank.baseline_days(conn, day)}일째 · 순위에 든 항목 {len(ranked)}개')
+    for source in sorted({e["source"] for e in ranked}):
+        e = next(x for x in ranked if x["source"] == source)
+        print(f'  {settings["sources"][source]["label"]}: 가운데 항목은 하루 +{e["typical"]:,.0f}{e["unit"]}')
+    print()
+    for e in ranked[:top]:
+        print(f'{e["place"]:>2}. 보통의 {e["times_typical"]:.1f}배  [{settings["sources"][e["source"]]["label"]}] {e["title"][:60]}')
+        print(f'      하루 +{e["velocity"]:,.0f}{e["unit"]} ({e["basis"]}) · {_numbers(e)}')
+    return 0
+
+
 _METRIC_LABEL = {"views": "조회", "stars": "별", "score": "점수", "comments": "댓글", "likes": "좋아요"}
 _EXTRA_LABEL = {"forks": "포크", "stars_daily": "오늘 +별", "stars_weekly": "이번 주 +별"}
 
 
 def _numbers(row) -> str:
     parts = [f"{label} {row[key]:,}" for key, label in _METRIC_LABEL.items() if row[key] is not None]
-    extra = json.loads(row["extra"])
+    extra = row["extra"] if isinstance(row["extra"], dict) else json.loads(row["extra"])
     parts += [f"{label} {extra[key]:,}" for key, label in _EXTRA_LABEL.items() if key in extra]
     return " · ".join(parts)
 
