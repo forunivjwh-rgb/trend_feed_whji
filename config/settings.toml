@@ -134,5 +134,6 @@ comments_per_video = 20      # 영상마다 읽는 댓글 수(관련순). 0이�
 comment_workers = 8          # 동시에 읽는 영상 수
 phrase_min_comments = 3      # 서로 다른 댓글 이만큼에 나와야 "반복되는 말"로 친다
 phrase_max_words = 3         # 몇 단어짜리 말까지 볼지
-phrase_min_chars = 3         # 이보다 짧은 말은 세지 않는다(ㅋㅋ 같은 것)
+phrase_min_chars = 3         # 이보다 짧은 말은 세지 않는다
+phrase_ignore_chars = "ㅋㅎㅠ"  # 이 글자만으로 된 말(ㅋㅋㅋ, ㅎㅎ, ㅠㅠ)은 세지 않는다. 더 빼려면 글자를 추가(예: "ㅋㅎㅠㅜ")
 phrase_top = 5               # 영상마다 남기는 말의 수

@@ -11,7 +11,7 @@ from tests.test_youtube import KEY, api_error, video, with_key
 OPTS = dict(max_words=3, min_comments=3, top=5, min_chars=3)
 CFG = {"enabled": True, "api_base": "https://example.invalid/youtube/v3", "regions": ["KR"], "limit": 3,
        "comments_per_video": 20, "comment_workers": 2, "phrase_min_comments": 3, "phrase_max_words": 3,
-       "phrase_min_chars": 3, "phrase_top": 5}
+       "phrase_min_chars": 3, "phrase_top": 5, "phrase_ignore_chars": "ㅋㅎㅠ"}
 SECRET_WORDS = "아무도모르는비밀원문"
 
 
@@ -28,6 +28,39 @@ class RepeatedTest(unittest.TestCase):
         found = phrases.repeated(comments, **OPTS)
         self.assertEqual(found[0], {"text": "스카프 아저씨", "count": 3})
         self.assertNotIn("ㅋㅋ", [f["text"] for f in found])
+
+
+class LaughterTest(unittest.TestCase):
+    """ㅋ·ㅎ·ㅠ만으로 된 말은 '반복되는 말'에서 뺀다."""
+
+    OPTS = {**OPTS, "ignore_chars": "ㅋㅎㅠ"}
+
+    def test_real_cases_from_the_first_run(self):
+        # 실제 첫 실행에서 나온 것: [('ㅋㅋㅋㅋㅋ', 5)] 와 [('ㅋㅋㅋ', 3), ('캐인님', 3)]
+        only_laughing = ["ㅋㅋㅋㅋㅋ", "ㅋㅋㅋㅋㅋ 미쳤다", "아 ㅋㅋㅋㅋㅋ", "ㅋㅋㅋㅋㅋ!!", "진짜 ㅋㅋㅋㅋㅋ"]
+        self.assertEqual(phrases.repeated(only_laughing, **self.OPTS), [])
+        mixed = ["ㅋㅋㅋ 캐인님 최고", "캐인님 ㅋㅋㅋ", "역시 캐인님 ㅋㅋㅋ"]
+        self.assertEqual(phrases.repeated(mixed, **self.OPTS), [{"text": "캐인님", "count": 3}])
+
+    def test_all_three_letters_and_mixes_of_them_are_dropped(self):
+        for noise in ("ㅋㅋㅋ", "ㅎㅎㅎ", "ㅠㅠㅠ", "ㅋㅎㅋㅎ", "ㅠㅠㅋㅋ", "ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ"):
+            with self.subTest(noise=noise):
+                comments = [f"{noise} 하나", f"둘 {noise}", f"{noise}"]
+                self.assertEqual(phrases.repeated(comments, **self.OPTS), [])
+
+    def test_words_that_merely_contain_those_letters_are_kept(self):
+        comments = ["ㅋㅋ큐ㅠ 좋다", "ㅋㅋ큐ㅠ 인정", "와 ㅋㅋ큐ㅠ"]  # '큐'가 섞여 있어 웃음소리만은 아니다
+        self.assertEqual(phrases.repeated(comments, **self.OPTS), [{"text": "ㅋㅋ큐ㅠ", "count": 3}])
+
+    def test_laughter_does_not_glue_its_neighbours_into_one_phrase(self):
+        # "스카프 ㅋㅋㅋ 아저씨"는 "스카프 아저씨"라는 말을 한 것이 아니다
+        comments = ["스카프 ㅋㅋㅋ 아저씨", "스카프 ㅋㅋㅋ 아저씨", "스카프 ㅋㅋㅋ 아저씨"]
+        found = {f["text"] for f in phrases.repeated(comments, **self.OPTS)}
+        self.assertEqual(found, {"스카프", "아저씨"})
+
+    def test_empty_setting_keeps_the_old_behaviour(self):
+        comments = ["ㅋㅋㅋ", "ㅋㅋㅋ 아", "오 ㅋㅋㅋ"]
+        self.assertEqual(phrases.repeated(comments, **{**self.OPTS, "ignore_chars": ""}), [{"text": "ㅋㅋㅋ", "count": 3}])
 
 
 class Fetch:
@@ -103,6 +136,7 @@ class YoutubeCommentsTest(unittest.TestCase):
         self.assertEqual(cfg["comments_per_video"], 20)
         for name in ("comment_workers", "phrase_min_comments", "phrase_max_words", "phrase_min_chars", "phrase_top"):
             self.assertIn(name, cfg)
+        self.assertEqual(cfg["phrase_ignore_chars"], "ㅋㅎㅠ")
 
 
 if __name__ == "__main__":
