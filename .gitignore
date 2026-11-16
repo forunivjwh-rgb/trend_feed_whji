@@ -218,3 +218,29 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- trend_feed 프로젝트 ---
+# 비밀 값
+.env.*
+!.env.example
+
+# 인스타 로그인 정보가 든 브라우저 프로필·쿠키
+browser-profile/
+*.cookies
+cookies.json
+
+# 수집한 데이터와 DB
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# 실행 결과와 로그
+logs/
+out/
+
+# 운영체제·편집기
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
