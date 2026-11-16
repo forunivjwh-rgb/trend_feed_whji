@@ -244,10 +244,14 @@ def _row(t: dict, sources: dict, chip: str = "") -> str:
     rank_txt = f"#{t['rank']}" if t["rank"] else "순위 밖"
     read = '<span class="chip">실탐</span>' if t.get("deepread") else '<span class="chip">메타만</span>'
     top_item = max(t["items"], key=lambda e: e["attention"])
+    if t["name"] == top_item["title"]:  # 이름이 대표 글 제목 그대로면 한 번만 적고 그 제목에 링크를 건다
+        name_html, meta_html = _link(top_item), escape(_numbers_line(top_item))
+    else:
+        name_html, meta_html = escape(t["name"]), f"{_link(top_item)} · {escape(_numbers_line(top_item))}"
     return f"""
 <div class="item">
   <div><div class="row">{_dots(t['platforms'], by_code)}<span class="small">{rank_txt} · {escape(t['code'])}</span></div>
-  <div class="t">{escape(t['name'])}</div><div class="meta">{_link(top_item)} · {escape(_numbers_line(top_item))}</div></div>
+  <div class="t">{name_html}</div><div class="meta">{meta_html}</div></div>
   <div class="row"><span style="font-size:13px">{escape(value)} · 출처 {t['origins']}곳</span>{read}{chip}</div>
 </div>"""
 

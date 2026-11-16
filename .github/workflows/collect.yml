@@ -60,7 +60,6 @@ jobs:
       - name: 수집 · 주제 · 실탐 · 피드 · 기록
         env:
           FASTEMBED_CACHE_PATH: ${{ runner.temp }}/fastembed
-          HF_HUB_DISABLE_PROGRESS_BARS: "1"
         run: bash scripts/actions_run.sh
 
       - name: 피드 화면을 Pages 용으로 보관

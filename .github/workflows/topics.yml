@@ -40,6 +40,4 @@ jobs:
           python -m trendfeed import --dir _data
 
       - name: 주제 후보 (LLM 검토 포함)
-        env:
-          HF_HUB_DISABLE_PROGRESS_BARS: "1"
         run: python -m trendfeed topics --review --top 30
