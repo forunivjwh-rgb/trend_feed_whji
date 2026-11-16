@@ -11,7 +11,7 @@ from tests.test_run import SAMPLE
 
 SETTINGS = {
     "sources": {
-        "hackernews": {"enabled": True, "api_base": "https://example.invalid/v0", "limit": 2, "workers": 2},
+        "hackernews": {"enabled": True, "api_base": "https://example.invalid/v0", "limit": 10, "workers": 2},
         "github_trending": {"enabled": True, "base_url": "https://example.invalid/trending",
                             "periods": ["daily", "weekly"], "pause_sec": 0},
     }
@@ -66,6 +66,39 @@ class ServerRunTest(unittest.TestCase):
         out = self.run_once("2026-11-16", "ok", top=(2, 3))  # 1번 글은 빠지고 3번이 새로 들어옴
         self.assertEqual((out["hackernews"]["status"], out["hackernews"]["item_count"]), ("ok", 3))
         self.assertEqual(out["github_trending"]["item_count"], 2)  # 같은 저장소는 한 번만 센다
+
+
+class DropWarningTest(unittest.TestCase):
+    """평소보다 크게 줄면 '주의'. 평소 = 지난 며칠의 중앙값."""
+
+    STATUS = {"lookback_days": 7, "min_days": 3, "drop_ratio": 0.5}
+
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        self.addCleanup(self.conn.close)
+        self.settings = {"status": self.STATUS, "sources": {"hackernews": SETTINGS["sources"]["hackernews"]}}
+
+    def run_day(self, n, top):
+        fetch = Fetch(list(top), {i: story(i) for i in range(1, 100)})
+        return collect_all(self.settings, self.conn, f"2026-11-{n:02d}", fetch=fetch)[0]
+
+    def test_big_drop_is_a_warning_with_the_reason(self):
+        for n in (10, 11, 12):
+            self.assertEqual(self.run_day(n, range(1, 11))["status"], "ok")
+        self.settings["sources"]["hackernews"] = {**SETTINGS["sources"]["hackernews"], "limit": 4}
+        out = self.run_day(13, range(1, 5))
+        self.assertEqual((out["status"], out["item_count"]), ("warn", 4))
+        self.assertEqual(out["memo"], "평소보다 크게 줄었음 (평소 10건 → 오늘 4건)")
+
+    def test_no_judgement_until_enough_history(self):
+        self.run_day(10, range(1, 11))
+        self.run_day(11, range(1, 11))
+        self.settings["sources"]["hackernews"] = {**SETTINGS["sources"]["hackernews"], "limit": 2}
+        self.assertEqual(self.run_day(12, range(1, 3))["status"], "ok")
+
+    def test_shipped_settings_have_the_rule(self):
+        from trendfeed import config
+        self.assertEqual(config.load()["status"], self.STATUS)
 
 
 if __name__ == "__main__":

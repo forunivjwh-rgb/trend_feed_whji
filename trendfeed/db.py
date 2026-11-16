@@ -107,6 +107,14 @@ CREATE TABLE IF NOT EXISTS topic_daily (
     PRIMARY KEY (topic_code, date)
 );
 
+CREATE TABLE IF NOT EXISTS feedback (
+    topic_code   TEXT NOT NULL REFERENCES topics(code),
+    date         TEXT NOT NULL,         -- 표시한 피드의 날짜
+    interesting  INTEGER NOT NULL,      -- 1: 몰랐는데 흥미로움
+    issue        INTEGER,               -- 표시에 쓰인 GitHub 이슈 번호
+    PRIMARY KEY (topic_code, date)
+);
+
 CREATE TABLE IF NOT EXISTS topic_why (
     topic_code  TEXT NOT NULL REFERENCES topics(code),
     date        TEXT NOT NULL,
@@ -206,6 +214,11 @@ def save_llm_call(conn, day: str, *, created_at: str, purpose: str, ref: str, mo
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (day, created_at, purpose, ref, model, input_tokens, output_tokens),
     )
+
+
+def save_feedback(conn, code: str, day: str, *, issue: int | None = None, interesting: int = 1) -> None:
+    conn.execute("INSERT OR REPLACE INTO feedback (topic_code, date, interesting, issue) VALUES (?, ?, ?, ?)",
+                 (code, day, interesting, issue))
 
 
 def listed_count(conn: sqlite3.Connection, day: str, source: str) -> int:

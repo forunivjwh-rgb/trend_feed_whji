@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config, llm, rank, score
+from . import config, feedback, llm, rank, score
 from .run import STATUS_LABEL
 
 CSS = """
@@ -189,7 +189,17 @@ def _label_chip(t: dict) -> str:
     return '<span class="chip line">점수 순</span>'
 
 
-def _card(t: dict, place: int, sources: dict, cfg: dict) -> str:
+def _mark(t: dict, settings: dict, day: str) -> str:
+    """'몰랐는데 흥미로움' 표시: 이미 했으면 표시만, 아니면 GitHub 이슈를 만드는 링크."""
+    if t.get("interesting"):
+        return '<span class="chip line">✓ 몰랐는데 흥미로움</span>'
+    url = feedback.new_issue_url(settings, t["code"], day, t["name"])
+    if not url:
+        return ""
+    return f'<a class="chip line" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">몰랐는데 흥미로움</a>'
+
+
+def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "") -> str:
     by_code = {s["code"]: s["label"] for s in sources.values() if "code" in s}
     if t["mode"] == "early" or t["score"] is None:
         big_label, big = "오늘 어텐션", f"{t['attention']:.1f}"
@@ -218,6 +228,7 @@ def _card(t: dict, place: int, sources: dict, cfg: dict) -> str:
       <div class="row">{_dots(t['platforms'], by_code)}</div>
       <div class="small">출처 {t['origins']}곳 · 항목 {t['item_count']}건 · 처음 나타난 날 {escape(t['first_seen'])}</div>
       {note}
+      <div class="row">{mark}</div>
     </div>
     <div class="score"><span class="small">{escape(big_label)}</span><b>{escape(big)}</b></div>
   </div>
@@ -330,9 +341,12 @@ def build(conn, day: str, settings: dict) -> str:
     picks = [topics_today[c] for c in score.explore_picks(conn, day, settings, shown) if c in topics_today]
     if picks:
         picks[0]["explore"] = True
-    cards = [_card(t, i, sources, cfg) for i, t in enumerate(top, start=1)]
-    if picks:
-        cards.append(_card(picks[0], len(top) + 1, sources, cfg))
+    marked = {r[0] for r in conn.execute("SELECT topic_code FROM feedback WHERE date = ? AND interesting = 1", (day,))}
+    top5 = top + picks[:1]
+    for t in top5:
+        t["interesting"] = t["code"] in marked
+    cards = [_card(t, i, sources, cfg, _mark(t, settings, day)) for i, t in enumerate(top5, start=1)]
+    liked = sum(t["interesting"] for t in top5)
 
     # 분야별 Top 3 (Top 5에 나온 주제는 빼고)
     fields: list[str] = []
@@ -411,7 +425,7 @@ def build(conn, day: str, settings: dict) -> str:
       <h1>오늘의 유행 피드</h1>
       <span class="small">가동 {days}일차</span>
     </div>
-    <p class="sub">{escape(run_line)}</p>
+    <p class="sub">{escape(run_line)} · 오늘 Top {len(top5)} 중 "몰랐는데 흥미로움" {liked}개</p>
     <div class="tiles">{stats_html}</div>
     {notice}
   </header>

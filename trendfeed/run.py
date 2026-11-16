@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import time
+from statistics import median
 from datetime import datetime, timezone
 
 from . import db
@@ -21,11 +22,24 @@ def collect_all(settings: dict, conn, day: str, only: str | None = None, fetch=N
     for name, cfg in settings["sources"].items():
         if not cfg.get("enabled") or (only and name != only):
             continue
-        summaries.append(_collect_one(conn, day, name, module_for(name, cfg), cfg, fetch))
+        summaries.append(_collect_one(conn, day, name, module_for(name, cfg), cfg, fetch, settings.get("status")))
     return summaries
 
 
-def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch) -> dict:
+def _usual_count(conn, day: str, source: str, status_cfg: dict | None) -> float | None:
+    """이 소스가 평소 하루에 모은 건수(지난 며칠의 중앙값). 기록이 모자라면 None."""
+    if not status_cfg:
+        return None
+    counts = [r[0] for r in conn.execute(
+        "SELECT item_count FROM source_runs WHERE source = ? AND date < ? AND status != 'empty' ORDER BY date DESC LIMIT ?",
+        (source, day, status_cfg["lookback_days"]),
+    )]
+    if len(counts) < status_cfg["min_days"]:
+        return None
+    return float(median(counts))
+
+
+def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch, status_cfg: dict | None = None) -> dict:
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     t0 = time.monotonic()
     records, followed, problems = [], [], []
@@ -60,8 +74,10 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch) -> dict:
         # 하루에 여러 번 돌 수 있으므로 건수는 "오늘 하루 목록에 있었던 항목 수"로 센다.
         # 이번 실행이 실패해도 앞선 실행이 모은 것은 그대로 남는다.
         day_count = db.listed_count(conn, day, name)
-        # 주의: "일부만 실패"했거나 상대 서버가 막았을 때 쓴다. "평소보다 크게 줄 때" 기준은
-        # 실제 수집량을 본 뒤 정한다(명세 9번 열린 항목).
+        # 주의: 일부만 실패했거나, 상대 서버가 막았거나, 평소보다 크게 줄었을 때(명세 3번).
+        usual = _usual_count(conn, day, name, status_cfg)
+        if day_count and usual and day_count < usual * status_cfg["drop_ratio"]:
+            problems.append(f"평소보다 크게 줄었음 (평소 {usual:.0f}건 → 오늘 {day_count}건)")
         if problems and (day_count or blocked):
             status = "warn"
         else:

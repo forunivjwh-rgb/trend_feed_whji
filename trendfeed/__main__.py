@@ -18,7 +18,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import archive, config, db, deepread, feed, rank, schedule, topicrun, topics, why
+from . import archive, config, db, deepread, feed, feedback, rank, schedule, topicrun, topics, why
 from .fetch import Fetcher
 from .run import STATUS_LABEL, collect_all
 
@@ -118,6 +118,7 @@ def _daily(settings: dict) -> int:
     code = 0
     steps = (
         lambda: _collect(settings, None, say),
+        lambda: _feedback(settings, say),    # GitHub 이슈로 남긴 "몰랐는데 흥미로움" 표시를 읽는다
         lambda: _topic_step(settings, say),  # 묶기 도구가 없으면 글 하나를 주제 하나로 둔다
         lambda: _deepread(settings, say),    # LLM 키가 없으면 이 단계만 건너뛴다
         lambda: _why(settings, say),         # LLM 키가 없으면 이 단계만 건너뛴다
@@ -137,6 +138,12 @@ def _topic_step(settings: dict, say=print) -> int:
     conn = db.connect(config.db_path(settings))
     _say_topic_step(topicrun.run(conn, config.today(settings), settings, review=True), say)
     return 0  # 주제 단계가 안 돼도 수집과 피드는 정상으로 친다
+
+
+def _feedback(settings: dict, say=print) -> int:
+    conn = db.connect(config.db_path(settings))
+    feedback.sync(conn, settings, Fetcher(settings["http"]), say=say)
+    return 0
 
 
 def _why(settings: dict, say=print) -> int:
