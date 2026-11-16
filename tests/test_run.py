@@ -4,6 +4,7 @@ import json
 import plistlib
 import unittest
 from pathlib import Path
+from xml.etree import ElementTree
 
 from trendfeed import config, db, schedule
 from trendfeed.run import collect_all
@@ -147,11 +148,27 @@ class SettingsFileTest(unittest.TestCase):
         self.assertEqual(s["sources"]["github_trending"]["periods"], ["daily", "weekly"])
         self.assertRegex(config.today(s), r"^\d{4}-\d{2}-\d{2}$")
 
-    def test_schedule_file_uses_configured_time(self):
+    def test_mac_schedule_uses_configured_time(self):
         plist = plistlib.loads(schedule.build_plist(config.load()))
         self.assertEqual(plist["StartCalendarInterval"], {"Hour": 4, "Minute": 0})
-        self.assertEqual(plist["ProgramArguments"][1:], ["-m", "trendfeed", "collect"])
+        self.assertEqual(plist["ProgramArguments"][1:], ["-m", "trendfeed", "daily"])
         self.assertEqual(plist["WorkingDirectory"], str(config.ROOT))
+
+    def test_windows_schedule_runs_daily_and_catches_up_missed_runs(self):
+        ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+        python = r"C:\Users\홍 길동\trend & feed\.venv\Scripts\pythonw.exe"
+        xml = schedule.build_windows_xml(config.load(), python=python)
+        root = ElementTree.fromstring(xml.encode("utf-16"))  # 윈도우가 읽는 것과 같은 글자 형식으로 읽어 본다
+        find = lambda path: root.find(path, ns).text  # noqa: E731
+        self.assertEqual(find("t:Triggers/t:CalendarTrigger/t:StartBoundary")[-8:], "04:00:00")
+        self.assertEqual(find("t:Triggers/t:CalendarTrigger/t:ScheduleByDay/t:DaysInterval"), "1")
+        self.assertEqual(find("t:Settings/t:StartWhenAvailable"), "true")
+        self.assertEqual(find("t:Settings/t:WakeToRun"), "false")
+        self.assertEqual(find("t:Settings/t:DisallowStartIfOnBatteries"), "false")
+        self.assertEqual(find("t:Settings/t:ExecutionTimeLimit"), "PT3H")
+        self.assertEqual(find("t:Actions/t:Exec/t:Command"), python)
+        self.assertEqual(find("t:Actions/t:Exec/t:Arguments"), "-m trendfeed daily")
+        self.assertEqual(find("t:Actions/t:Exec/t:WorkingDirectory"), str(config.ROOT))
 
 
 if __name__ == "__main__":

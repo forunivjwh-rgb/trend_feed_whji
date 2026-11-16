@@ -1,15 +1,19 @@
 """명령줄 입구.
 
+    python -m trendfeed daily              매일 하는 일 전부(자동 실행이 부르는 명령)
     python -m trendfeed collect            오늘 치를 모아 저장한다
     python -m trendfeed status             쌓인 기록과 오늘 모은 것을 보여 준다
-    python -m trendfeed install-schedule   매일 자동 실행을 등록한다(맥)
+    python -m trendfeed install-schedule   매일 자동 실행을 등록한다(윈도우·맥)
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+import traceback
+from datetime import datetime
 from pathlib import Path
 
 from . import config, db, schedule
@@ -22,45 +26,77 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, help="설정 파일 경로 (기본: config/settings.toml)")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("daily", help="매일 하는 일 전부(자동 실행이 부르는 명령)")
+
     p = sub.add_parser("collect", help="오늘 치를 모아 저장한다")
     p.add_argument("--source", choices=sorted(registry()), help="이 소스만 돌린다")
 
     p = sub.add_parser("status", help="쌓인 기록과 오늘 모은 것을 보여 준다")
     p.add_argument("--top", type=int, default=5, help="소스마다 보여 줄 항목 수")
 
-    p = sub.add_parser("install-schedule", help="매일 자동 실행을 등록한다(맥)")
+    p = sub.add_parser("install-schedule", help="매일 자동 실행을 등록한다(윈도우·맥)")
     p.add_argument("--print", action="store_true", dest="print_only", help="등록하지 않고 내용만 본다")
-    sub.add_parser("uninstall-schedule", help="매일 자동 실행을 해제한다(맥)")
+    p.add_argument("--os", choices=["windows", "mac"], help="--print 와 함께: 어느 쪽 내용을 볼지")
+    sub.add_parser("uninstall-schedule", help="매일 자동 실행을 해제한다")
 
     args = parser.parse_args(argv)
     settings = config.load(args.config)
+    # 윈도우에서 한글·특수문자 때문에 출력이 깨지거나 멈추지 않게 한다.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
+    if args.command == "daily":
+        return _daily(settings)
     if args.command == "collect":
         return _collect(settings, args.source)
     if args.command == "status":
         return _status(settings, args.top)
     if args.command == "install-schedule":
-        return _install_schedule(settings, args.print_only)
+        return _install_schedule(settings, args.print_only, args.os)
     if args.command == "uninstall-schedule":
         try:
             schedule.uninstall()
-        except RuntimeError as e:
-            print(e)
+        except (schedule.Unsupported, subprocess.CalledProcessError) as e:
+            print(f"해제하지 못했습니다: {e}")
             return 1
         print("자동 실행을 해제했습니다.")
         return 0
     return 2
 
 
-def _collect(settings: dict, only: str | None) -> int:
+def _daily(settings: dict) -> int:
+    """매일 하는 일. 화면에도 쓰고 data/logs/daily.log 에도 남긴다.
+
+    자동 실행은 창 없이 돌기 때문에, 무슨 일이 있었는지는 이 파일로 확인한다.
+    """
+    log_path = config.ROOT / "data" / "logs" / "daily.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def say(text: str) -> None:
+        print(text)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+
+    say(f"--- {datetime.now().astimezone().isoformat(timespec='seconds')} 시작")
+    try:
+        code = _collect(settings, None, say)
+    except Exception:
+        say(traceback.format_exc())
+        code = 1
+    say("--- 끝" if code == 0 else "--- 끝 (문제 있음)")
+    return code
+
+
+def _collect(settings: dict, only: str | None, say=print) -> int:
     day = config.today(settings)
     conn = db.connect(config.db_path(settings))
     summaries = collect_all(settings, conn, day, only=only)
-    print(f"[{day}] 수집")
+    say(f"[{day}] 수집")
     for s in summaries:
-        print("  " + _run_line(s))
+        say("  " + _run_line(s))
     if not summaries:
-        print("  켜져 있는 소스가 없습니다.")
+        say("  켜져 있는 소스가 없습니다.")
     # 전부 실패했을 때만 실패로 끝낸다.
     return 0 if any(s["status"] != "empty" for s in summaries) else 1
 
@@ -125,19 +161,21 @@ def _numbers(row) -> str:
     return " · ".join(parts)
 
 
-def _install_schedule(settings: dict, print_only: bool) -> int:
-    if print_only:
-        print(schedule.build_plist(settings).decode())
-        return 0
+def _install_schedule(settings: dict, print_only: bool, target: str | None) -> int:
     try:
-        path = schedule.install(settings)
-    except RuntimeError as e:
-        print(e)
+        if print_only:
+            print(schedule.preview(settings, target))
+            return 0
+        where = schedule.install(settings)
+    except (schedule.Unsupported, subprocess.CalledProcessError) as e:
+        print(f"등록하지 못했습니다: {e}")
         return 1
     s = settings["schedule"]
-    print(f"매일 {s['hour']:02d}:{s['minute']:02d}에 자동으로 수집합니다.")
-    print(f"예약 파일: {path}")
-    print("실행 기록(로그): data/logs/daily.log")
+    print(f"매일 {s['hour']:02d}:{s['minute']:02d}에 자동으로 돌립니다.")
+    if sys.platform == "win32" and s["windows"]["run_missed_asap"]:
+        print("그 시각에 컴퓨터가 꺼져 있었으면, 켠 뒤 가능한 한 빨리 돌립니다.")
+    print(f"등록한 곳: {where}")
+    print("실행 기록: data/logs/daily.log")
     return 0
 
 

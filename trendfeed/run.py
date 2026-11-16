@@ -62,7 +62,7 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch) -> dict:
         "duration_sec": time.monotonic() - t0,
     }
     with conn:  # 한 소스의 저장은 전부 되거나 전부 안 되거나
-        db.save_records(conn, day, name, records + followed)
+        db.save_records(conn, day, name, records + followed, captured_at=started)
         db.save_run(conn, day, **summary)
     return summary
 

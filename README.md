@@ -13,39 +13,74 @@
 
 둘 다 키나 로그인이 필요 없다.
 
-## 맥미니에서 켜는 법
+## 윈도우에서 켜는 법
 
-터미널에서 한 번만 준비한다. `uv`는 파이썬을 알맞은 버전으로 맞춰 실행해 주는 도구다.
+**1. 코드 받기.** GitHub의 이 repo 페이지에서 초록색 `Code` 버튼 → `Download ZIP`으로 받아 압축을 푼다. 예: `C:\trend_feed`. (git을 쓴다면 `git clone`도 된다.) 폴더를 나중에 옮기면 6번을 다시 해야 한다.
+
+**2. PowerShell 열기.** 시작 메뉴에서 `PowerShell`을 찾아 연다. 아래 명령은 전부 여기에 붙여 넣는다.
+
+**3. `uv` 설치(한 번만).** `uv`는 파이썬을 알맞은 버전으로 맞춰 실행해 주는 도구다. 설치한 뒤 PowerShell을 닫았다 다시 연다.
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+**4. 폴더로 들어가 한 번 돌려 본다.** 처음에는 파이썬을 받느라 1~2분 걸릴 수 있다.
+
+```powershell
+cd C:\trend_feed
+```
+
+```powershell
+uv run python -m trendfeed daily
+```
+
+**5. 쌓인 것을 본다.**
+
+```powershell
+uv run python -m trendfeed status
+```
+
+**6. 매일 자동 실행 등록.** 윈도우의 "작업 스케줄러"에 `TrendFeed Daily`라는 이름으로 등록된다.
+
+```powershell
+uv run python -m trendfeed install-schedule
+```
+
+- 매일 04:00에 돈다. 시각은 `config/settings.toml`의 `[schedule]`에서 바꾸고 이 명령을 다시 돌리면 된다.
+- **그 시각에 노트북이 꺼져 있거나 잠들어 있었으면, 켠 뒤에 놓친 실행을 돌린다.** 윈도우가 켜진 직후 몇 분(보통 10분 안쪽) 기다렸다가 시작한다.
+- 로그인해 있는 동안에만 돌고, 인터넷이 연결돼 있어야 시작한다. 배터리로 쓰는 중에도 돈다.
+- 창은 뜨지 않는다. 무슨 일이 있었는지는 `data\logs\daily.log`를 메모장으로 열어 본다.
+- 해제는 아래 명령이다.
+
+```powershell
+uv run python -m trendfeed uninstall-schedule
+```
+
+노트북은 켜는 시각이 날마다 달라서 숫자를 읽는 간격이 24시간이 아닐 수 있다. 그래서 숫자를 읽은 시각을 같이 저장하고, 하루 증가량은 실제 간격으로 나눠 계산한다.
+
+## 맥에서 켜는 법
+
+터미널에서 `uv`를 한 번 설치한다.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-이 폴더(repo)로 들어가서 한 번 돌려 본다.
+이 폴더(repo)로 들어가서 돌려 보고, 자동 실행을 등록한다. 명령은 윈도우와 같다.
 
 ```bash
-uv run python -m trendfeed collect
+uv run python -m trendfeed daily
 ```
-
-쌓인 것을 본다.
-
-```bash
-uv run python -m trendfeed status
-```
-
-매일 04:00에 자동으로 돌게 등록한다(맥 전용). 시각은 `config/settings.toml`의 `[schedule]`에서 바꾸고 이 명령을 다시 돌리면 된다.
 
 ```bash
 uv run python -m trendfeed install-schedule
 ```
 
-해제는 이렇게 한다.
+맥이 그 시각에 잠들어 있으면 깨어난 뒤에 돈다. 꺼져 있었으면 그날은 건너뛴다.
 
-```bash
-uv run python -m trendfeed uninstall-schedule
-```
+## 공통
 
-- 맥이 그 시각에 잠들어 있으면 깨어난 뒤에 돈다. 꺼져 있으면 그날은 건너뛴다.
 - 같은 날 여러 번 돌려도 그날 숫자는 한 줄만 남는다(나중 값으로 덮어쓴다).
 - 자동 실행 기록은 `data/logs/daily.log`에 쌓인다.
 

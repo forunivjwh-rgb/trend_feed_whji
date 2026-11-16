@@ -3,4 +3,5 @@ name = "trendfeed"
 version = "0.1.0"
 description = "분야별 유행 감지 피드 (개인용)"
 requires-python = ">=3.11"
-dependencies = []
+# 윈도우에는 시간대 정보가 들어 있지 않아 따로 받는다.
+dependencies = ["tzdata; sys_platform == 'win32'"]

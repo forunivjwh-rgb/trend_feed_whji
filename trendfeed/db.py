@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS item_snapshots (
     item_id   INTEGER NOT NULL REFERENCES items(id),
     date      TEXT NOT NULL,
+    captured_at TEXT NOT NULL,          -- 숫자를 읽은 시각 (UTC). 하루 증가량을 잴 때 실제 간격을 쓴다
     listed    INTEGER NOT NULL,         -- 1: 그날 목록에 있었음, 0: 목록 밖에서 숫자만 다시 적음
     rank      INTEGER,                  -- 목록에서의 순서
     views     INTEGER,
@@ -72,7 +73,9 @@ def _json(d: dict) -> str:
     return json.dumps(d, ensure_ascii=False, sort_keys=True)
 
 
-def save_records(conn: sqlite3.Connection, day: str, source: str, records: list[Record]) -> None:
+def save_records(
+    conn: sqlite3.Connection, day: str, source: str, records: list[Record], captured_at: str
+) -> None:
     """항목과 그날의 숫자를 저장한다.
 
     같은 항목을 다시 보면 제목 등은 최신으로 고치되 '처음 수집한 날'은 그대로 둔다.
@@ -94,10 +97,10 @@ def save_records(conn: sqlite3.Connection, day: str, source: str, records: list[
         conn.execute(
             f"""
             INSERT OR REPLACE INTO item_snapshots
-                (item_id, date, listed, rank, {", ".join(METRICS)}, extra)
-            VALUES (?, ?, ?, ?, {", ".join("?" * len(METRICS))}, ?)
+                (item_id, date, captured_at, listed, rank, {", ".join(METRICS)}, extra)
+            VALUES (?, ?, ?, ?, ?, {", ".join("?" * len(METRICS))}, ?)
             """,
-            (item_id, day, int(r.listed), r.rank, *(r.metrics.get(m) for m in METRICS), _json(r.snap_extra)),
+            (item_id, day, captured_at, int(r.listed), r.rank, *(r.metrics.get(m) for m in METRICS), _json(r.snap_extra)),
         )
 
 
