@@ -102,5 +102,99 @@ class ClusterTest(unittest.TestCase):
         self.assertEqual(topics.text_of(entry("hackernews", "TCP/IP is fine", 1.0)), "TCP/IP is fine")
 
 
+@unittest.skipIf(np is None, "numpy 가 없어 건너뜀")
+class ReviewTest(unittest.TestCase):
+    """LLM의 판단(이름·합치기·떼어 내기)을 코드가 적용한다. 가짜 LLM을 쓴다."""
+
+    def setUp(self):
+        entries = [
+            entry("youtube", "[예비군] 대한민국 군필자라면 꼭 해봐야 하는 국산게임", 2.0, "youtube.com/channel/a"),
+            entry("wikipedia_ko", "대한민국", 1.0),
+            entry("hackernews", "What's Next for Nvidia?", 3.0, "example.com"),
+            entry("wikipedia_en", "Nvidia", 1.5),
+            entry("geeknews", "젠슨 황 이후, Nvidia는 어디로 가나?", 1.0, "news.hada.io/@a"),
+            entry("wikipedia_ko", "젠슨 황", 2.0),
+            entry("hackernews", "혼자 있는 글", 0.5),
+        ]
+        vectors = np.array([unit(1, 0, 0, 0), unit(1, 0, 0, 0), unit(0, 1, 0, 0), unit(0, 1, 0, 0),
+                            unit(0, 0, 1, 0), unit(0, 0, 1, 0), unit(0, 0, 0, 1)])
+        self.found = topics.cluster(entries, vectors, SETTINGS)
+        self.picked = topics.pick_for_review(self.found, SETTINGS["topics"])
+        self.text, self.where = topics.listing(self.picked, SETTINGS["sources"])
+
+    def number_of(self, title):
+        lines = self.text.splitlines()
+        return next(int(l.split("항목 ")[1].split(":")[0]) for l in lines if l.strip().endswith(title))
+
+    def topic_of(self, title):
+        return self.where[self.number_of(title)][0]
+
+    def test_listing_numbers_topics_and_items_for_the_llm(self):
+        self.assertTrue(self.text.startswith("주제 1\n  항목 1: ["))
+        self.assertIn("[Wikipedia (한국어)] 대한민국", self.text)
+        self.assertEqual(len(self.where), 7)
+
+    def test_names_merges_and_removals_are_applied(self):
+        nvidia, jensen, korea = self.topic_of("Nvidia"), self.topic_of("젠슨 황"), self.topic_of("대한민국")
+        review = {
+            "topics": [
+                {"id": nvidia, "name": "Nvidia의 다음 행보", "remove_items": []},
+                {"id": jensen, "name": "젠슨 황 이후의 Nvidia", "remove_items": []},
+                {"id": korea, "name": "예비군 게임", "remove_items": [self.number_of("대한민국")]},
+            ],
+            "merges": [{"ids": [nvidia, jensen]}],
+        }
+        result = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS["sources"])
+        by_name = {t["name"]: t for t in result}
+        merged = by_name["Nvidia의 다음 행보"]  # 어텐션이 더 큰 쪽의 이름을 쓴다
+        self.assertEqual(len(merged["items"]), 4)
+        self.assertEqual(merged["platforms"], ["GN", "HN", "WK"])
+        self.assertAlmostEqual(merged["attention"], 7.5)
+        self.assertEqual([e["title"] for e in by_name["예비군 게임"]["items"]],
+                         ["[예비군] 대한민국 군필자라면 꼭 해봐야 하는 국산게임"])
+        self.assertIn("대한민국", by_name)  # 떼어 낸 문서는 혼자 한 주제가 된다
+        self.assertFalse(by_name["대한민국"]["named_by_llm"])
+        self.assertEqual(sum(len(t["items"]) for t in result), 7)  # 항목은 하나도 사라지지 않는다
+
+    def test_nonsense_from_the_llm_is_ignored(self):
+        korea = self.topic_of("대한민국")
+        review = {
+            "topics": [{"id": 999, "name": "없는 주제", "remove_items": [1]},
+                       {"id": korea, "name": "", "remove_items": [9999, self.number_of("Nvidia")]}],
+            "merges": [{"ids": [korea, 999]}, {"ids": [korea]}],
+        }
+        result = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS["sources"])
+        self.assertEqual(sorted(len(t["items"]) for t in result), sorted(len(t["items"]) for t in self.found))
+
+    def test_review_asks_once_and_survives_no_key_or_no_answer(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        import json
+
+        class Client:
+            def __init__(self, stop="end_turn"):
+                self.calls, self.stop = [], stop
+                self.messages = SimpleNamespace(create=self.create)
+
+            def create(self, **kw):
+                self.calls.append(kw)
+                return SimpleNamespace(stop_reason=self.stop, usage=SimpleNamespace(input_tokens=900, output_tokens=80),
+                                       content=[SimpleNamespace(type="text", text=json.dumps({"topics": [], "merges": []}))])
+
+        client = Client()
+        result, note, usage = topics.review(self.found, SETTINGS, client=client)
+        self.assertEqual((len(client.calls), note, usage), (1, "", {"input_tokens": 900, "output_tokens": 80}))
+        self.assertEqual(client.calls[0]["model"], SETTINGS["llm"]["model"])
+        self.assertIn("<주제후보>", client.calls[0]["messages"][0]["content"])
+        self.assertEqual(len(result), len(self.found))
+        _, note, _ = topics.review(self.found, SETTINGS, client=Client(stop="refusal"))
+        self.assertIn("건너뜀", note)
+        with mock.patch.object(config, "secret", lambda name: None):
+            same, note, usage = topics.review(self.found, SETTINGS)
+        self.assertIs(same, self.found)
+        self.assertIn("LLM 키 없음", note)
+        self.assertIsNone(usage)
+
+
 if __name__ == "__main__":
     unittest.main()
