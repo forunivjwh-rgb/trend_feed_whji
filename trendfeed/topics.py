@@ -121,6 +121,13 @@ def cluster(entries: list[dict], vectors, settings: dict) -> list[dict]:
     return topics
 
 
+def singletons(entries: list[dict], settings: dict) -> list[dict]:
+    """묶기 도구를 쓸 수 없을 때: 글 하나를 주제 하나로 둔다(물러서는 길)."""
+    found = [_make_topic([e], settings["sources"]) for e in entries]
+    found.sort(key=lambda t: -t["attention"])
+    return found
+
+
 def _make_topic(items: list[dict], sources: dict, name: str | None = None) -> dict:
     items = sorted(items, key=lambda e: -e["attention"])
     return {

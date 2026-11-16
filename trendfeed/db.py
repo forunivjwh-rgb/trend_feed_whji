@@ -106,6 +106,28 @@ CREATE TABLE IF NOT EXISTS topic_daily (
     item_count  INTEGER NOT NULL,
     PRIMARY KEY (topic_code, date)
 );
+
+CREATE TABLE IF NOT EXISTS topic_why (
+    topic_code  TEXT NOT NULL REFERENCES topics(code),
+    date        TEXT NOT NULL,
+    sentence    TEXT NOT NULL,          -- "왜 올랐나" 한 문장 (LLM이 코드가 준 숫자로만 씀)
+    model       TEXT NOT NULL,
+    PRIMARY KEY (topic_code, date)
+);
+
+CREATE TABLE IF NOT EXISTS topic_score (
+    topic_code  TEXT NOT NULL REFERENCES topics(code),
+    date        TEXT NOT NULL,
+    mode        TEXT NOT NULL,          -- early("지금 인기", 기준선 쌓이는 중) | score(평소 대비 점수)
+    z           REAL,                   -- 평소 대비 정도. early 에서는 비어 있다
+    accel       REAL,                   -- 가속(최근 3일 ÷ 14일)
+    breadth     INTEGER NOT NULL,       -- 플랫폼 수(폭)
+    origins     INTEGER NOT NULL,       -- 출처 수
+    score       REAL,
+    rank        INTEGER,                -- 순위. 출처 조건을 못 채우면 비어 있다
+    passed      INTEGER NOT NULL,       -- 임계 통과 여부
+    PRIMARY KEY (topic_code, date)
+);
 """
 
 

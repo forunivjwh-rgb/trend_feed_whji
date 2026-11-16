@@ -5,7 +5,7 @@ GitHub Actions 에는 저장 파일(SQLite)을 계속 둘 곳이 없어서, 하�
 다시 만들고, 수집한 뒤 오늘 치 파일을 새로 쓴다.
 
 한 줄이 기록 하나다(JSON). kind 가 "run" 이면 소스 실행 기록, "item" 이면 항목과 그날의 숫자,
-"deepread" 이면 실탐 요약, "llm" 이면 LLM 호출 기록(토큰 수), "topic" 이면 주제와 그날 속한 항목이다.
+"deepread" 이면 실탐 요약, "llm" 이면 LLM 호출 기록(토큰 수), "topic" 이면 주제와 그날 속한 항목, "why" 이면 주제별 "왜 올랐나" 문장이다.
 줄 순서를 항상 같게 써서 바뀐 곳만 차이로 남게 한다.
 """
 
@@ -68,6 +68,8 @@ def export_day(conn, day: str, out_dir: Path) -> Path:
             "attention": r["attention"], "platforms": json.loads(r["platforms"]), "origins": r["origins"],
             "items": [[m["source"], m["external_id"]] for m in members],
         })
+    for r in conn.execute("SELECT * FROM topic_why WHERE date = ? ORDER BY topic_code", (day,)):
+        lines.append({"kind": "why", "code": r["topic_code"], "sentence": r["sentence"], "model": r["model"]})
     path = Path(out_dir) / DAYS_DIR / f"{day}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     text = "".join(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n" for line in lines)
@@ -75,7 +77,7 @@ def export_day(conn, day: str, out_dir: Path) -> Path:
     return path
 
 
-def import_all(conn, in_dir: Path) -> int:
+def import_all(conn, in_dir: Path, settings: dict | None = None) -> int:
     """날짜별 파일을 오래된 날부터 읽어 저장 파일에 넣는다. 읽은 날 수를 돌려준다.
 
     여러 번 읽어도 결과가 같다(같은 날·같은 항목은 덮어쓴다).
@@ -107,12 +109,23 @@ def import_all(conn, in_dir: Path) -> int:
                         )
                 elif line["kind"] == "topic":
                     _import_topic(conn, day, line)
+                elif line["kind"] == "why":
+                    conn.execute("INSERT OR REPLACE INTO topic_why (topic_code, date, sentence, model) VALUES (?, ?, ?, ?)",
+                                 (line["code"], day, line["sentence"], line["model"]))
                 elif line["kind"] == "llm":
                     conn.execute(
                         f"INSERT OR REPLACE INTO llm_calls (date, {', '.join(_LLM_FIELDS)}) "
                         f"VALUES (?, {', '.join('?' * len(_LLM_FIELDS))})",
                         (day, *(line[k] for k in _LLM_FIELDS)),
                     )
+    # 주제 점수는 저장하지 않고 되살린 기록에서 다시 계산한다(같은 식이면 같은 값이 나온다).
+    from . import config, score
+
+    days_with_topics = [r[0] for r in conn.execute("SELECT DISTINCT date FROM topic_daily ORDER BY date")]
+    if days_with_topics:
+        settings = config.load() if settings is None else settings
+        for day in days_with_topics:
+            score.compute(conn, day, settings)
     return len(files)
 
 
