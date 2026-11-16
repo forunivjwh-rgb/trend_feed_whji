@@ -116,21 +116,22 @@ class ReviewTest(unittest.TestCase):
             entry("wikipedia_ko", "젠슨 황", 2.0),
             entry("hackernews", "혼자 있는 글", 0.5),
         ]
-        vectors = np.array([unit(1, 0, 0, 0), unit(1, 0, 0, 0), unit(0, 1, 0, 0), unit(0, 1, 0, 0),
-                            unit(0, 0, 1, 0), unit(0, 0, 1, 0), unit(0, 0, 0, 1)])
-        self.found = topics.cluster(entries, vectors, SETTINGS)
+        # Nvidia 글 둘은 뜻 비슷함 0.8 (묶는 기준 0.85에는 못 미쳐 따로 있지만, 같은 주제다)
+        self.vectors = np.array([unit(1, 0, 0, 0), unit(1, 0, 0, 0), unit(0, 1, 0, 0), unit(0, 1, 0, 0),
+                                 unit(0, 0.8, 0.6, 0), unit(0, 0.8, 0.6, 0), unit(0, 0, 0, 1)])
+        self.found = topics.cluster(entries, self.vectors, SETTINGS)
         self.picked = topics.pick_for_review(self.found, SETTINGS["topics"])
         self.text, self.where = topics.listing(self.picked, SETTINGS["sources"])
 
     def number_of(self, title):
         lines = self.text.splitlines()
-        return next(int(l.split("항목 ")[1].split(":")[0]) for l in lines if l.strip().endswith(title))
+        return next(int(l.split("항목 I")[1].split(":")[0]) for l in lines if l.strip().endswith(title))
 
     def topic_of(self, title):
         return self.where[self.number_of(title)][0]
 
     def test_listing_numbers_topics_and_items_for_the_llm(self):
-        self.assertTrue(self.text.startswith("주제 1\n  항목 1: ["))
+        self.assertTrue(self.text.startswith("주제 T1\n  항목 I1: ["))
         self.assertIn("[Wikipedia (한국어)] 대한민국", self.text)
         self.assertEqual(len(self.where), 7)
 
@@ -138,13 +139,15 @@ class ReviewTest(unittest.TestCase):
         nvidia, jensen, korea = self.topic_of("Nvidia"), self.topic_of("젠슨 황"), self.topic_of("대한민국")
         review = {
             "topics": [
-                {"id": nvidia, "name": "Nvidia의 다음 행보", "remove_items": []},
-                {"id": jensen, "name": "젠슨 황 이후의 Nvidia", "remove_items": []},
-                {"id": korea, "name": "예비군 게임", "remove_items": [self.number_of("대한민국")]},
+                {"id": f"T{nvidia}", "name": "Nvidia의 다음 행보", "remove_items": []},
+                {"id": f"T{jensen}", "name": "젠슨 황 이후의 Nvidia", "remove_items": []},
+                {"id": f"T{korea}", "name": "예비군 게임", "remove_items": [f"I{self.number_of('대한민국')}"]},
             ],
-            "merges": [{"ids": [nvidia, jensen]}],
+            "merges": [{"ids": [f"T{nvidia}", f"T{jensen}"]}],
         }
-        result = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS["sources"])
+        result, log = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS, self.vectors)
+        self.assertEqual(len([l for l in log if l.startswith("합침")]), 1)
+        self.assertEqual(len([l for l in log if l.startswith("떼어 냄")]), 1)
         by_name = {t["name"]: t for t in result}
         merged = by_name["Nvidia의 다음 행보"]  # 어텐션이 더 큰 쪽의 이름을 쓴다
         self.assertEqual(len(merged["items"]), 4)
@@ -159,12 +162,23 @@ class ReviewTest(unittest.TestCase):
     def test_nonsense_from_the_llm_is_ignored(self):
         korea = self.topic_of("대한민국")
         review = {
-            "topics": [{"id": 999, "name": "없는 주제", "remove_items": [1]},
-                       {"id": korea, "name": "", "remove_items": [9999, self.number_of("Nvidia")]}],
-            "merges": [{"ids": [korea, 999]}, {"ids": [korea]}],
+            "topics": [{"id": "T999", "name": "없는 주제", "remove_items": ["I1"]},
+                       {"id": f"T{korea}", "name": "", "remove_items": ["I9999", f"I{self.number_of('Nvidia')}", 2, "T1"]}],
+            # 없는 번호, 혼자뿐인 묶음, T가 붙지 않은 번호(항목 번호와 헷갈린 것)는 전부 버린다
+            "merges": [{"ids": [f"T{korea}", "T999"]}, {"ids": [f"T{korea}"]}, {"ids": [1, 2]}, {"ids": ["I1", "I3"]}],
         }
-        result = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS["sources"])
+        result, log = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS, self.vectors)
         self.assertEqual(sorted(len(t["items"]) for t in result), sorted(len(t["items"]) for t in self.found))
+        self.assertEqual(log, [])
+
+    def test_code_rejects_merges_of_unrelated_topics(self):
+        # 실제 실행에서 나온 잘못: LLM이 관계없는 주제를 합치라고 했다(문무왕 + Salon 기사, 뜻 비슷함 0.12)
+        nvidia, korea = self.topic_of("Nvidia"), self.topic_of("대한민국")
+        review = {"topics": [], "merges": [{"ids": [f"T{nvidia}", f"T{korea}"]}]}
+        result, log = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS, self.vectors)
+        self.assertEqual(sorted(len(t["items"]) for t in result), sorted(len(t["items"]) for t in self.found))
+        self.assertEqual(len(log), 1)
+        self.assertTrue(log[0].startswith("합치기 거절(뜻 비슷함 0.00)"))
 
     def test_review_asks_once_and_survives_no_key_or_no_answer(self):
         from types import SimpleNamespace
@@ -182,17 +196,18 @@ class ReviewTest(unittest.TestCase):
                                        content=[SimpleNamespace(type="text", text=json.dumps({"topics": [], "merges": []}))])
 
         client = Client()
-        result, note, usage = topics.review(self.found, SETTINGS, client=client)
-        self.assertEqual((len(client.calls), note, usage), (1, "", {"input_tokens": 900, "output_tokens": 80}))
+        result, notes, usage = topics.review(self.found, SETTINGS, client=client, vectors=self.vectors)
+        self.assertEqual((len(client.calls), notes, usage), (1, [], {"input_tokens": 900, "output_tokens": 80}))
+        self.assertIn("주제 T1", client.calls[0]["messages"][0]["content"])
         self.assertEqual(client.calls[0]["model"], SETTINGS["llm"]["model"])
         self.assertIn("<주제후보>", client.calls[0]["messages"][0]["content"])
         self.assertEqual(len(result), len(self.found))
-        _, note, _ = topics.review(self.found, SETTINGS, client=Client(stop="refusal"))
-        self.assertIn("건너뜀", note)
+        _, notes, _ = topics.review(self.found, SETTINGS, client=Client(stop="refusal"))
+        self.assertIn("건너뜀", notes[0])
         with mock.patch.object(config, "secret", lambda name: None):
-            same, note, usage = topics.review(self.found, SETTINGS)
+            same, notes, usage = topics.review(self.found, SETTINGS)
         self.assertIs(same, self.found)
-        self.assertIn("LLM 키 없음", note)
+        self.assertIn("LLM 키 없음", notes[0])
         self.assertIsNone(usage)
 
 

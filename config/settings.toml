@@ -41,6 +41,7 @@ threshold = 0.85             # 뜻이 이만큼 비슷해야 같은 주제로 �
 name_min_chars = 3           # 이름으로 붙일 때, 이보다 짧은 이름은 쓰지 않는다(엉뚱한 글에 걸리지 않게)
 name_min_similarity = 0.45   # 제목에 괄호가 붙은(헷갈리는 이름의) 문서는 뜻도 이만큼 비슷해야 붙인다
 review_singles = 40          # LLM 검토(이름·합치기·떼어 내기)에 보일, 혼자인 주제의 수(어텐션 큰 순). 묶인 주제는 전부 보인다
+merge_min_similarity = 0.6   # LLM이 합치라고 해도, 두 주제의 뜻이 이만큼은 비슷해야 합친다(코드가 확인). 실제 값: 맞는 합치기 0.76~0.84, 틀린 합치기 0.06~0.46
 
 [llm]
 # LLM은 Claude API로 부른다. 키는 여기가 아니라 .env (GitHub에서는 Secrets) 의 ANTHROPIC_API_KEY 에 둔다.

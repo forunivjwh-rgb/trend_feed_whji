@@ -74,6 +74,8 @@ def _mentions(name: str, title: str) -> bool:
 def cluster(entries: list[dict], vectors, settings: dict) -> list[dict]:
     """항목들을 주제로 묶는다. entries 는 어텐션이 큰 순서(rank.now_popular 의 결과)."""
     cfg, sources = settings["topics"], settings["sources"]
+    for n, e in enumerate(entries):
+        e["_vec"] = n  # 이 항목의 벡터가 몇 번째인지(합치기 확인에 쓴다)
     by_name = [i for i, e in enumerate(entries) if sources[e["source"]].get("topic_match") == "name"]
     by_meaning = [i for i in range(len(entries)) if i not in set(by_name)]
     meaning_set = set(by_meaning)
@@ -139,57 +141,88 @@ def pick_for_review(found: list[dict], cfg: dict) -> list[dict]:
 
 
 def listing(picked: list[dict], sources: dict) -> tuple[str, dict[int, tuple[int, int]]]:
-    """LLM에게 보일 목록 글자와, 항목 번호 → (주제 번호, 주제 안 순서) 표를 만든다. 번호는 1부터."""
+    """LLM에게 보일 목록 글자와, 항목 번호 → (주제 번호, 주제 안 순서) 표를 만든다.
+
+    주제는 T1, T2…, 항목은 I1, I2… 로 적어 두 번호가 섞이지 않게 한다.
+    """
     lines, where, n = [], {}, 0
     for t_no, t in enumerate(picked, start=1):
-        lines.append(f"주제 {t_no}")
+        lines.append(f"주제 T{t_no}")
         for k, e in enumerate(t["items"]):
             n += 1
             where[n] = (t_no, k)
-            lines.append(f"  항목 {n}: [{sources[e['source']]['label']}] {e['title']}")
+            lines.append(f"  항목 I{n}: [{sources[e['source']]['label']}] {e['title']}")
     return "\n".join(lines), where
 
 
-def apply_review(found: list[dict], picked: list[dict], where: dict, review: dict, sources: dict) -> list[dict]:
-    """LLM의 판단(이름·합치기·떼어 내기)을 주제에 적용한다. 목록에 없는 번호는 무시한다."""
+def _number(value, prefix: str) -> int | None:
+    """'T12' → 12. 모양이 다르면 None (그 판단은 버린다)."""
+    m = re.fullmatch(rf"\s*{prefix}(\d+)\s*", str(value))
+    return int(m.group(1)) if m else None
+
+
+def _closeness(a: list[dict], b: list[dict], vectors) -> float:
+    """두 주제에서 가장 비슷한 항목 쌍의 뜻 비슷함."""
+    return max(float(vectors[x["_vec"]] @ vectors[y["_vec"]]) for x in a for y in b)
+
+
+def apply_review(found: list[dict], picked: list[dict], where: dict, review: dict, settings: dict,
+                 vectors=None) -> tuple[list[dict], list[str]]:
+    """LLM의 판단(이름·합치기·떼어 내기)을 주제에 적용한다. (주제들, 무엇을 했는지 적은 줄들).
+
+    LLM의 말을 그대로 믿지 않는다. 목록에 없는 번호는 버리고, 합치기는 두 주제의 뜻이
+    merge_min_similarity 이상 비슷할 때만 받아들인다(vectors 가 있을 때).
+    """
+    cfg, sources = settings["topics"], settings["sources"]
     names: dict[int, str] = {}
     members: dict[int, list[dict]] = {i: list(t["items"]) for i, t in enumerate(picked, start=1)}
     loose: list[dict] = []
+    log: list[str] = []
     for row in review.get("topics", []):
-        t_no = row.get("id")
+        t_no = _number(row.get("id"), "T")
         if t_no not in members:
             continue
-        if row.get("name", "").strip():
-            names[t_no] = row["name"].strip()
-        for item_no in row.get("remove_items", []):
+        if str(row.get("name", "")).strip():
+            names[t_no] = str(row["name"]).strip()
+        for raw in row.get("remove_items", []):
+            item_no = _number(raw, "I")
             # 그 주제에 실제로 들어 있는 항목만, 그리고 주제가 비지 않을 때만 떼어 낸다
             if where.get(item_no, (None,))[0] == t_no and len(members[t_no]) > 1:
                 item = picked[t_no - 1]["items"][where[item_no][1]]
                 if item in members[t_no]:
                     members[t_no].remove(item)
                     loose.append(item)
+                    log.append(f"떼어 냄: '{item['title'][:30]}' ← '{names.get(t_no, picked[t_no - 1]['name'])[:30]}'")
 
-    merged_into: dict[int, int] = {}
+    def label(i):
+        return names.get(i) or members[i][0]["title"]
+
     for group in review.get("merges", []):
-        ids = [i for i in dict.fromkeys(group.get("ids", [])) if i in members and i not in merged_into]
+        ids = [i for i in dict.fromkeys(_number(x, "T") for x in group.get("ids", [])) if i in members]
         if len(ids) < 2:
             continue
         keep = max(ids, key=lambda i: sum(e["attention"] for e in members[i]))  # 가장 큰 주제의 이름을 쓴다
         for i in ids:
-            if i != keep:
-                members[keep] += members.pop(i)
-                merged_into[i] = keep
+            if i == keep:
+                continue
+            if vectors is not None:
+                close = _closeness(members[keep], members[i], vectors)
+                if close < cfg["merge_min_similarity"]:
+                    log.append(f"합치기 거절(뜻 비슷함 {close:.2f}): '{label(keep)[:30]}' + '{label(i)[:30]}'")
+                    continue
+            log.append(f"합침: '{label(keep)[:30]}' + '{label(i)[:30]}'")
+            members[keep] += members.pop(i)
 
     picked_ids = {id(t) for t in picked}
     result = [t for t in found if id(t) not in picked_ids]
     result += [_make_topic(items, sources, names.get(t_no)) for t_no, items in members.items()]
     result += [_make_topic([item], sources) for item in loose]
     result.sort(key=lambda t: -t["attention"])
-    return result
+    return result, log
 
 
-def review(found: list[dict], settings: dict, client=None) -> tuple[list[dict], str, dict | None]:
-    """LLM 검토를 한 번 하고 적용한다. (주제들, 알릴 말, 사용량)을 돌려준다.
+def review(found: list[dict], settings: dict, client=None, vectors=None) -> tuple[list[dict], list[str], dict | None]:
+    """LLM 검토를 한 번 하고 적용한다. (주제들, 알릴 줄들, 사용량)을 돌려준다.
 
     LLM을 쓸 수 없거나 답을 못 받으면 주제는 그대로 두고 이유만 알린다.
     """
@@ -197,13 +230,14 @@ def review(found: list[dict], settings: dict, client=None) -> tuple[list[dict], 
         try:
             client = llm.make_client()
         except llm.Unavailable as e:
-            return found, f"{e} — 이름 붙이기·합치기는 건너뜀", None
+            return found, [f"{e} — 이름 붙이기·합치기는 건너뜀"], None
     picked = pick_for_review(found, settings["topics"])
     text, where = listing(picked, settings["sources"])
     try:
         answer, usage = llm.review_topics(client, settings["llm"], text)
     except Exception as err:
-        return found, f"{llm.explain_error(err)} — 이름 붙이기·합치기는 건너뜀", None
+        return found, [f"{llm.explain_error(err)} — 이름 붙이기·합치기는 건너뜀"], None
     if not answer:
-        return found, "LLM이 답을 주지 않아 이름 붙이기·합치기는 건너뜀", usage
-    return apply_review(found, picked, where, answer, settings["sources"]), "", usage
+        return found, ["LLM이 답을 주지 않아 이름 붙이기·합치기는 건너뜀"], usage
+    result, log = apply_review(found, picked, where, answer, settings, vectors)
+    return result, log, usage

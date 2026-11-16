@@ -226,15 +226,15 @@ def _topics(settings: dict, top: int, day: str | None, review: bool = False) -> 
         return 1
     found = topics.cluster(entries, vectors, settings)
     if review:
-        found, note, usage = topics.review(found, settings)
+        found, notes, usage = topics.review(found, settings, vectors=vectors)
         if usage:
             now = datetime.now().astimezone().isoformat(timespec="seconds")
             with conn:
                 db.save_llm_call(conn, day, created_at=now, purpose="topics", ref=day,
                                  model=settings["llm"]["model"], **usage)
             print(f"LLM 검토 1회 (입력 {usage['input_tokens']:,} · 출력 {usage['output_tokens']:,} 토큰)")
-        if note:
-            print(note)
+        for line in notes:
+            print("  " + line)
     merged = [t for t in found if len(t["items"]) > 1]
     cross = [t for t in merged if len(t["platforms"]) > 1]
     print(f"[{day}] 항목 {len(entries)}개 → 주제 {len(found)}개 · 2건 이상 묶인 주제 {len(merged)}개 · 여러 플랫폼에 걸친 주제 {len(cross)}개")
