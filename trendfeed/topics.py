@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import re
 
+from . import llm
+
 
 class Unavailable(Exception):
     """주제 묶기에 필요한 도구가 없다(사람이 읽을 말)."""
@@ -112,16 +114,96 @@ def cluster(entries: list[dict], vectors, settings: dict) -> list[dict]:
         else:
             groups.append([i])
 
-    topics = []
-    for g in groups:
-        items = sorted((entries[j] for j in g), key=lambda e: -e["attention"])
-        topics.append(
-            {
-                "items": items,
-                "attention": sum(e["attention"] for e in items),
-                "platforms": sorted({sources[e["source"]]["code"] for e in items}),
-                "origins": len({e["origin"] for e in items}),
-            }
-        )
+    topics = [_make_topic([entries[j] for j in g], sources) for g in groups]
     topics.sort(key=lambda t: -t["attention"])
     return topics
+
+
+def _make_topic(items: list[dict], sources: dict, name: str | None = None) -> dict:
+    items = sorted(items, key=lambda e: -e["attention"])
+    return {
+        "name": name or items[0]["title"],  # 이름을 못 받았으면 가장 큰 항목의 제목
+        "named_by_llm": name is not None,
+        "items": items,
+        "attention": sum(e["attention"] for e in items),
+        "platforms": sorted({sources[e["source"]]["code"] for e in items}),
+        "origins": len({e["origin"] for e in items}),
+    }
+
+
+def pick_for_review(found: list[dict], cfg: dict) -> list[dict]:
+    """LLM에게 보일 주제: 2건 이상 묶인 것 전부와, 혼자인 것 중 어텐션이 큰 순으로 몇 개."""
+    multi = [t for t in found if len(t["items"]) > 1]
+    single = [t for t in found if len(t["items"]) == 1][: cfg["review_singles"]]
+    return multi + single
+
+
+def listing(picked: list[dict], sources: dict) -> tuple[str, dict[int, tuple[int, int]]]:
+    """LLM에게 보일 목록 글자와, 항목 번호 → (주제 번호, 주제 안 순서) 표를 만든다. 번호는 1부터."""
+    lines, where, n = [], {}, 0
+    for t_no, t in enumerate(picked, start=1):
+        lines.append(f"주제 {t_no}")
+        for k, e in enumerate(t["items"]):
+            n += 1
+            where[n] = (t_no, k)
+            lines.append(f"  항목 {n}: [{sources[e['source']]['label']}] {e['title']}")
+    return "\n".join(lines), where
+
+
+def apply_review(found: list[dict], picked: list[dict], where: dict, review: dict, sources: dict) -> list[dict]:
+    """LLM의 판단(이름·합치기·떼어 내기)을 주제에 적용한다. 목록에 없는 번호는 무시한다."""
+    names: dict[int, str] = {}
+    members: dict[int, list[dict]] = {i: list(t["items"]) for i, t in enumerate(picked, start=1)}
+    loose: list[dict] = []
+    for row in review.get("topics", []):
+        t_no = row.get("id")
+        if t_no not in members:
+            continue
+        if row.get("name", "").strip():
+            names[t_no] = row["name"].strip()
+        for item_no in row.get("remove_items", []):
+            # 그 주제에 실제로 들어 있는 항목만, 그리고 주제가 비지 않을 때만 떼어 낸다
+            if where.get(item_no, (None,))[0] == t_no and len(members[t_no]) > 1:
+                item = picked[t_no - 1]["items"][where[item_no][1]]
+                if item in members[t_no]:
+                    members[t_no].remove(item)
+                    loose.append(item)
+
+    merged_into: dict[int, int] = {}
+    for group in review.get("merges", []):
+        ids = [i for i in dict.fromkeys(group.get("ids", [])) if i in members and i not in merged_into]
+        if len(ids) < 2:
+            continue
+        keep = max(ids, key=lambda i: sum(e["attention"] for e in members[i]))  # 가장 큰 주제의 이름을 쓴다
+        for i in ids:
+            if i != keep:
+                members[keep] += members.pop(i)
+                merged_into[i] = keep
+
+    picked_ids = {id(t) for t in picked}
+    result = [t for t in found if id(t) not in picked_ids]
+    result += [_make_topic(items, sources, names.get(t_no)) for t_no, items in members.items()]
+    result += [_make_topic([item], sources) for item in loose]
+    result.sort(key=lambda t: -t["attention"])
+    return result
+
+
+def review(found: list[dict], settings: dict, client=None) -> tuple[list[dict], str, dict | None]:
+    """LLM 검토를 한 번 하고 적용한다. (주제들, 알릴 말, 사용량)을 돌려준다.
+
+    LLM을 쓸 수 없거나 답을 못 받으면 주제는 그대로 두고 이유만 알린다.
+    """
+    if client is None:
+        try:
+            client = llm.make_client()
+        except llm.Unavailable as e:
+            return found, f"{e} — 이름 붙이기·합치기는 건너뜀", None
+    picked = pick_for_review(found, settings["topics"])
+    text, where = listing(picked, settings["sources"])
+    try:
+        answer, usage = llm.review_topics(client, settings["llm"], text)
+    except Exception as err:
+        return found, f"{llm.explain_error(err)} — 이름 붙이기·합치기는 건너뜀", None
+    if not answer:
+        return found, "LLM이 답을 주지 않아 이름 붙이기·합치기는 건너뜀", usage
+    return apply_review(found, picked, where, answer, settings["sources"]), "", usage

@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("topics", help="비슷한 항목을 묶은 주제 후보를 글자로 본다")
     p.add_argument("--top", type=int, default=15, help="보여 줄 주제 수")
     p.add_argument("--date", help="이 날짜 기준 (기본: 가장 최근에 모은 날)")
+    p.add_argument("--review", action="store_true", help="LLM으로 이름 붙이기·합치기·떼어 내기까지 한다(키 필요)")
 
     p = sub.add_parser("feed", help="피드 페이지를 만든다")
     p.add_argument("--open", action="store_true", dest="open_page", help="만든 뒤 브라우저로 연다")
@@ -75,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "rank":
         return _rank(settings, args.top, args.date)
     if args.command == "topics":
-        return _topics(settings, args.top, args.date)
+        return _topics(settings, args.top, args.date, args.review)
     if args.command == "feed":
         return _feed(settings, args.date, args.open_page)
     if args.command == "import":
@@ -210,7 +211,7 @@ def _feed(settings: dict, day: str | None, open_page: bool, say=print) -> int:
     return 0
 
 
-def _topics(settings: dict, top: int, day: str | None) -> int:
+def _topics(settings: dict, top: int, day: str | None, review: bool = False) -> int:
     conn = db.connect(config.db_path(settings))
     day = day or conn.execute("SELECT MAX(date) FROM item_snapshots").fetchone()[0]
     if day is None:
@@ -224,10 +225,22 @@ def _topics(settings: dict, top: int, day: str | None) -> int:
         print(f"{e} — `pip install fastembed` 뒤에 다시 돌려 주세요.")
         return 1
     found = topics.cluster(entries, vectors, settings)
+    if review:
+        found, note, usage = topics.review(found, settings)
+        if usage:
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            with conn:
+                db.save_llm_call(conn, day, created_at=now, purpose="topics", ref=day,
+                                 model=settings["llm"]["model"], **usage)
+            print(f"LLM 검토 1회 (입력 {usage['input_tokens']:,} · 출력 {usage['output_tokens']:,} 토큰)")
+        if note:
+            print(note)
     merged = [t for t in found if len(t["items"]) > 1]
     cross = [t for t in merged if len(t["platforms"]) > 1]
     print(f"[{day}] 항목 {len(entries)}개 → 주제 {len(found)}개 · 2건 이상 묶인 주제 {len(merged)}개 · 여러 플랫폼에 걸친 주제 {len(cross)}개")
     for t in (cross + [t for t in merged if t not in cross])[:top]:
+        if t["named_by_llm"]:
+            print(f"\n■ {t['name']}", end="")
         print(f"\n● 플랫폼 {'·'.join(t['platforms'])} · 출처 {t['origins']}곳 · 항목 {len(t['items'])}건 · 어텐션 합 {t['attention']:.1f}")
         for e in t["items"][:6]:
             print(f"    [{settings['sources'][e['source']]['label']}] {e['title'][:70]}")

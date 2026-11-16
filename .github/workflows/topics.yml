@@ -1,0 +1,43 @@
+# 손으로 돌려 보는 실행: 쌓인 기록으로 주제 후보를 묶고, LLM 검토(이름·합치기·떼어 내기)까지 해서
+# 결과를 실행 기록에 글자로 보여 준다. 아무것도 저장하지 않는다(피드와 data 브랜치는 그대로).
+name: 주제 후보 보기
+
+on:
+  workflow_dispatch: # Actions 화면의 "Run workflow" 버튼으로만 돈다
+
+jobs:
+  topics:
+    name: 주제 후보 묶어 보기
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 도구 설치 (LLM, 주제 묶기)
+        run: pip install --quiet "anthropic>=2,<3" "fastembed>=0.9,<1"
+
+      # 키는 repo Secrets 에서 받아 실행하는 동안만 .env 에 둔다. 이 서버는 끝나면 통째로 지워진다.
+      - name: 키를 .env 에 두기
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          : > .env
+          if [ -n "${ANTHROPIC_API_KEY}" ]; then
+            printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY}" >> .env
+          else
+            echo "ANTHROPIC_API_KEY 가 Secrets 에 없어 LLM 검토는 건너뜁니다."
+          fi
+
+      - name: 쌓인 기록 되살리기
+        run: |
+          git fetch --quiet --depth=1 origin "+refs/heads/data:refs/remotes/origin/data"
+          git worktree add --quiet _data origin/data
+          python -m trendfeed import --dir _data
+
+      - name: 주제 후보 (LLM 검토 포함)
+        run: python -m trendfeed topics --review --top 30
