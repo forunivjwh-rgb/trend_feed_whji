@@ -57,6 +57,29 @@ CREATE TABLE IF NOT EXISTS item_snapshots (
     extra     TEXT NOT NULL DEFAULT '{}',       -- 그 밖의 숫자 (JSON)
     PRIMARY KEY (item_id, date)
 );
+
+CREATE TABLE IF NOT EXISTS deepreads (
+    item_id         INTEGER NOT NULL REFERENCES items(id),
+    date            TEXT NOT NULL,      -- 읽은 날. 7일 재탐색 금지 판단에도 쓴다
+    scope           TEXT NOT NULL,      -- 읽은 범위 ("README 앞 12,000자" 등)
+    what            TEXT NOT NULL,      -- 무엇
+    why             TEXT NOT NULL,      -- 왜 나왔나
+    how             TEXT NOT NULL,      -- 어떻게 쓰이나
+    comments_point  TEXT NOT NULL,      -- 댓글 논점 한 줄
+    model           TEXT NOT NULL,
+    PRIMARY KEY (item_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS llm_calls (
+    date           TEXT NOT NULL,
+    created_at     TEXT NOT NULL,       -- 부른 시각 (UTC)
+    purpose        TEXT NOT NULL,       -- 용도 (deepread 등)
+    ref            TEXT NOT NULL,       -- 무엇에 대해 불렀나 (소스:외부id)
+    model          TEXT NOT NULL,
+    input_tokens   INTEGER NOT NULL,
+    output_tokens  INTEGER NOT NULL,
+    PRIMARY KEY (created_at, purpose, ref)
+);
 """
 
 
@@ -117,6 +140,24 @@ def recently_listed(conn: sqlite3.Connection, day: str, source: str, days: int) 
         (source, since, day),
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def save_deepread(conn, day: str, item_id: int, *, scope: str, what: str, why: str, how: str,
+                  comments_point: str, model: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO deepreads (item_id, date, scope, what, why, how, comments_point, model) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (item_id, day, scope, what, why, how, comments_point, model),
+    )
+
+
+def save_llm_call(conn, day: str, *, created_at: str, purpose: str, ref: str, model: str,
+                  input_tokens: int, output_tokens: int) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO llm_calls (date, created_at, purpose, ref, model, input_tokens, output_tokens) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (day, created_at, purpose, ref, model, input_tokens, output_tokens),
+    )
 
 
 def listed_count(conn: sqlite3.Connection, day: str, source: str) -> int:

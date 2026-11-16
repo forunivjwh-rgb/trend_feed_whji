@@ -27,15 +27,25 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: LLM 도구 설치
+        run: pip install --quiet "anthropic>=2,<3"
+
       # 키는 repo Secrets 에서 받아 실행하는 동안만 .env 에 둔다. 이 서버는 끝나면 통째로 지워진다.
       - name: 키를 .env 에 두기
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          : > .env
           if [ -n "${YOUTUBE_API_KEY}" ]; then
-            printf 'YOUTUBE_API_KEY=%s\n' "${YOUTUBE_API_KEY}" > .env
+            printf 'YOUTUBE_API_KEY=%s\n' "${YOUTUBE_API_KEY}" >> .env
           else
             echo "YOUTUBE_API_KEY 가 Secrets 에 없어 유튜브는 건너뜁니다."
+          fi
+          if [ -n "${ANTHROPIC_API_KEY}" ]; then
+            printf 'ANTHROPIC_API_KEY=%s\n' "${ANTHROPIC_API_KEY}" >> .env
+          else
+            echo "ANTHROPIC_API_KEY 가 Secrets 에 없어 실탐 요약(LLM)은 건너뜁니다."
           fi
 
       - name: 수집 · 피드 · 기록

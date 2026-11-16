@@ -18,7 +18,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import archive, config, db, feed, rank, schedule
+from . import archive, config, db, deepread, feed, rank, schedule
+from .fetch import Fetcher
 from .run import STATUS_LABEL, collect_all
 
 
@@ -107,7 +108,12 @@ def _daily(settings: dict) -> int:
 
     say(f"--- {datetime.now().astimezone().isoformat(timespec='seconds')} 시작")
     code = 0
-    for step in (lambda: _collect(settings, None, say), lambda: _feed(settings, config.today(settings), False, say)):
+    steps = (
+        lambda: _collect(settings, None, say),
+        lambda: _deepread(settings, say),  # LLM 키가 없으면 이 단계만 건너뛴다
+        lambda: _feed(settings, config.today(settings), False, say),
+    )
+    for step in steps:
         try:  # 수집이 전부 실패한 날에도 피드는 만든다(막힌 이유가 화면에 보이게)
             code = step() or code
         except Exception:
@@ -115,6 +121,12 @@ def _daily(settings: dict) -> int:
             code = 1
     say("--- 끝" if code == 0 else "--- 끝 (문제 있음)")
     return code
+
+
+def _deepread(settings: dict, say=print) -> int:
+    conn = db.connect(config.db_path(settings))
+    deepread.run(conn, config.today(settings), settings, Fetcher(settings["http"]), say=say)
+    return 0  # 실탐이 안 돼도 수집과 피드는 정상으로 친다
 
 
 def _collect(settings: dict, only: str | None, say=print) -> int:

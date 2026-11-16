@@ -4,7 +4,8 @@ GitHub Actions 에는 저장 파일(SQLite)을 계속 둘 곳이 없어서, 하�
 (days/2026-11-16.jsonl)로 `data` 브랜치에 쌓는다. 실행할 때마다 그 파일들로 저장 파일을
 다시 만들고, 수집한 뒤 오늘 치 파일을 새로 쓴다.
 
-한 줄이 기록 하나다(JSON). kind 가 "run" 이면 소스 실행 기록, "item" 이면 항목과 그날의 숫자다.
+한 줄이 기록 하나다(JSON). kind 가 "run" 이면 소스 실행 기록, "item" 이면 항목과 그날의 숫자,
+"deepread" 이면 실탐 요약, "llm" 이면 LLM 호출 기록(토큰 수)이다.
 줄 순서를 항상 같게 써서 바뀐 곳만 차이로 남게 한다.
 """
 
@@ -19,6 +20,8 @@ DAYS_DIR = "days"
 _RUN_FIELDS = ("source", "item_count", "followed_count", "status", "memo", "started_at", "duration_sec")
 _ITEM_FIELDS = ("source", "external_id", "title", "origin", "url", "published_at", "first_seen")
 _SNAP_FIELDS = ("captured_at", "listed", "rank", *METRICS)
+_DEEPREAD_FIELDS = ("scope", "what", "why", "how", "comments_point", "model")
+_LLM_FIELDS = ("created_at", "purpose", "ref", "model", "input_tokens", "output_tokens")
 
 
 def export_day(conn, day: str, out_dir: Path) -> Path:
@@ -40,6 +43,15 @@ def export_day(conn, day: str, out_dir: Path) -> Path:
         line.update({k: r[k] for k in _SNAP_FIELDS if r[k] is not None})
         line["extra"] = json.loads(r["extra"])
         lines.append(line)
+    for r in conn.execute(
+        "SELECT i.source, i.external_id, d.* FROM deepreads d JOIN items i ON i.id = d.item_id "
+        "WHERE d.date = ? ORDER BY i.source, i.external_id",
+        (day,),
+    ):
+        lines.append({"kind": "deepread", "source": r["source"], "external_id": r["external_id"],
+                      **{k: r[k] for k in _DEEPREAD_FIELDS}})
+    for r in conn.execute("SELECT * FROM llm_calls WHERE date = ? ORDER BY created_at, ref", (day,)):
+        lines.append({"kind": "llm", **{k: r[k] for k in _LLM_FIELDS}})
     path = Path(out_dir) / DAYS_DIR / f"{day}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     text = "".join(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n" for line in lines)
@@ -68,6 +80,21 @@ def import_all(conn, in_dir: Path) -> int:
                     )
                 elif line["kind"] == "item":
                     _import_item(conn, day, line)
+                elif line["kind"] == "deepread":
+                    row = conn.execute("SELECT id FROM items WHERE source = ? AND external_id = ?",
+                                       (line["source"], line["external_id"])).fetchone()
+                    if row:
+                        conn.execute(
+                            f"INSERT OR REPLACE INTO deepreads (item_id, date, {', '.join(_DEEPREAD_FIELDS)}) "
+                            f"VALUES (?, ?, {', '.join('?' * len(_DEEPREAD_FIELDS))})",
+                            (row[0], day, *(line[k] for k in _DEEPREAD_FIELDS)),
+                        )
+                elif line["kind"] == "llm":
+                    conn.execute(
+                        f"INSERT OR REPLACE INTO llm_calls (date, {', '.join(_LLM_FIELDS)}) "
+                        f"VALUES (?, {', '.join('?' * len(_LLM_FIELDS))})",
+                        (day, *(line[k] for k in _LLM_FIELDS)),
+                    )
     return len(files)
 
 

@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config, rank
+from . import config, llm, rank
 from .run import STATUS_LABEL
 
 CSS = """
@@ -53,6 +53,7 @@ h3{font-size:20px;line-height:1.35;overflow-wrap:anywhere}
 .nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(128px,100%),1fr));gap:8px}
 .num{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:8px;background:var(--chip-bg);min-width:0}
 .num b{font-size:18px;line-height:1.3}
+.read{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:8px;background:var(--band)}
 .bar{height:8px;border-radius:4px;background:var(--chip-bg);overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--s1);border-radius:4px}
 .notice{background:var(--band);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
@@ -145,7 +146,22 @@ def _card(e: dict, sources: dict) -> str:
     <div class="small" style="font-weight:600;margin-bottom:8px">왜 올랐나 (수치) — {escape(e['basis'])}</div>
     <div class="nums">{tiles}</div>
   </div>
+  {_summary(e.get("deepread"))}
 </article>"""
+
+
+def _summary(d: dict | None) -> str:
+    """실탐 요약. LLM이 쓴 글이고, 아래에 어디까지 읽고 썼는지 적는다(명세 6번)."""
+    if not d:
+        return ""
+    rows = [("무엇", d["what"]), ("왜 나왔나", d["why"]), ("어떻게 쓰이나", d["how"])]
+    if d["comments_point"]:
+        rows.append(("댓글 논점", d["comments_point"]))
+    body = "".join(f'<p><b>{escape(l)}</b> · {escape(v)}</p>' for l, v in rows)
+    return (
+        '<div class="read"><div class="small" style="font-weight:600">실탐 요약 (원문을 읽고 LLM이 씀)</div>'
+        f'{body}<div class="small">읽은 범위: {escape(d["scope"])} · {escape(d["date"])} · {escape(d["model"])}</div></div>'
+    )
 
 
 def _row(e: dict, sources: dict, show_source: bool = True) -> str:
@@ -155,6 +171,20 @@ def _row(e: dict, sources: dict, show_source: bool = True) -> str:
   <div>{head}<div class="t">{_link(e)}</div></div>
   <div class="row"><span style="font-size:13px">{escape(_numbers_line(e))}</span><span class="chip">보통의 {e['times_typical']:.1f}배</span></div>
 </div>"""
+
+
+def _llm_stat(conn, day: str) -> str:
+    """맨 위 요약 칸: 오늘 실탐 몇 건, LLM을 몇 번 불렀고 토큰을 얼마나 썼나."""
+    reads = conn.execute("SELECT COUNT(*) FROM deepreads WHERE date = ?", (day,)).fetchone()[0]
+    calls, tin, tout = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) FROM llm_calls WHERE date = ?",
+        (day,),
+    ).fetchone()
+    if calls:
+        return f"실탐 {reads}건 · LLM {calls}회 (입력 {tin:,} · 출력 {tout:,} 토큰)"
+    if not config.secret(llm.KEY_NAME):
+        return "LLM 키 없음 — 건너뜀"
+    return "오늘은 새로 읽은 것 없음"
 
 
 def build(conn, day: str, settings: dict) -> str:
@@ -202,8 +232,14 @@ def build(conn, day: str, settings: dict) -> str:
         ("수집", f"{total_items}건 · 소스 {len(runs)}곳 중 {ok}곳 수집됨"),
         ("순위에 든 항목", f"{len(ranked)}개 (주제로 묶기 전)"),
         ("기준선", f"{min(days, need)}/{need}일"),
-        ("실탐 · 요약", "아직 없음 (나중 단계)"),
+        ("실탐 · 요약", _llm_stat(conn, day)),
     ]
+    # 카드에 붙일 실탐 요약: 항목마다 가장 최근 것
+    for e in top:
+        row = conn.execute(
+            "SELECT * FROM deepreads WHERE item_id = ? AND date <= ? ORDER BY date DESC LIMIT 1", (e["item_id"], day)
+        ).fetchone()
+        e["deepread"] = dict(row) if row else None
     stats_html = "".join(f'<div class="tile"><span class="small">{escape(l)}</span><b>{escape(v)}</b></div>' for l, v in stats)
 
     status_rows = []

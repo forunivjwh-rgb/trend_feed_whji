@@ -74,7 +74,7 @@ def now_popular(conn, day: str, settings: dict) -> list[dict]:
     entries = []
     for row in conn.execute(
         """
-        SELECT s.*, i.source, i.title, i.url, i.origin, i.published_at, i.first_seen, i.extra AS item_extra
+        SELECT s.*, i.source, i.external_id, i.title, i.url, i.origin, i.published_at, i.first_seen, i.extra AS item_extra
         FROM item_snapshots s JOIN items i ON i.id = s.item_id
         WHERE s.date = ? AND s.listed = 1
         """,

@@ -34,6 +34,24 @@ top_n = 5                    # 맨 위 카드 수
 per_source_n = 3             # 분야별 구역에서 소스마다 보여 줄 수
 explore_n = 5                # 탐색 슬롯에 무작위로 뽑는 수
 
+[llm]
+# LLM은 Claude API로 부른다. 키는 여기가 아니라 .env (GitHub에서는 Secrets) 의 ANTHROPIC_API_KEY 에 둔다.
+# 키가 없으면 LLM을 쓰는 부분(실탐 요약)만 건너뛴다.
+model = "claude-haiku-5-5"   # 모델 이름. 바꾸려면 여기만 고친다 (예: "claude-sonnet-5-5")
+effort = "low"               # 얼마나 공들여 생각하게 할지: low | medium | high. 높을수록 느리고 비싸다
+max_tokens = 4000            # 답 하나의 최대 길이(토큰)
+
+[deepread]
+# 실탐(깊게 읽기, 명세 6번). 위에 오른 항목의 원문을 읽고 LLM으로 요약한다.
+enabled = true
+top_n = 10                   # "지금 인기" 위에서 몇 건을 대상으로 할지
+no_reread_days = 7           # 같은 항목은 이 날수 안에 다시 읽지 않는다
+budget_minutes = 90          # 하루 실탐에 쓰는 시간 한도
+max_chars = 12000            # 글 하나에서 읽는 최대 글자 수(넘으면 앞부분만 읽고 그 사실을 적는다)
+min_chars = 200              # 읽은 글이 이보다 짧으면 요약하지 않는다(지어내지 않게)
+comments = 20                # Hacker News 댓글 위에서 몇 개 (명세 6번)
+pause_sec = 3.0              # 글 하나를 읽고 다음 글을 읽기 전에 쉬는 시간(초)
+
 [sources.hackernews]
 enabled = true
 label = "Hacker News"
