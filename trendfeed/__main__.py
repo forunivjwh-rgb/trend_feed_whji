@@ -218,7 +218,8 @@ def _topics(settings: dict, top: int, day: str | None) -> int:
         return 0
     entries = rank.now_popular(conn, day, settings)
     try:
-        vectors = topics.embed([topics.text_of(e) for e in entries], settings["topics"])
+        texts = [topics.text_of(e, settings["sources"][e["source"]].get("phrase_ignore_chars", "")) for e in entries]
+        vectors = topics.embed(texts, settings["topics"])
     except topics.Unavailable as e:
         print(f"{e} — `pip install fastembed` 뒤에 다시 돌려 주세요.")
         return 1
