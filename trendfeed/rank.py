@@ -14,7 +14,7 @@ import json
 from datetime import date, datetime, timedelta
 from statistics import median
 
-from .sources import registry
+from .sources import module_for
 
 
 def _hours_between(later: str, earlier: str) -> float:
@@ -25,10 +25,19 @@ def velocity(spec: dict, snap: dict, prev: dict | None, published_at: str | None
     """항목의 하루 증가량과 그 근거. 계산할 수 없으면 (None, None).
 
     spec 은 소스가 알려 주는 것: metric(주 숫자 열), reported_daily / reported_weekly
-    (소스가 직접 알려 주는 증가량이 있을 때 그 이름).
+    (소스가 직접 알려 주는 증가량이 있을 때 그 이름), metric_is_daily(주 숫자가 이미
+    하루치일 때), count_new(숫자가 없어 등장 횟수로 셀 때).
     """
     extra = snap["extra"]
+    # 0) 숫자가 없는 소스(표결 없는 RSS 등)는 새로 올라온 날에 1건으로 센다.
+    if spec.get("count_new"):
+        if snap.get("first_seen") == snap["date"]:
+            return 1.0, "새로 올라옴 · 숫자가 없어 등장 횟수로 셈"
+        return 0.0, "이전에 이미 셈"
     value = snap[spec["metric"]]
+    # 0') 주 숫자가 이미 "그날 하루의 값"인 소스(일간 조회수 등)는 그대로 쓴다.
+    if spec.get("metric_is_daily"):
+        return (float(value), "그날 하루의 값(소스 제공)") if value is not None else (None, None)
     # 1) 소스가 "오늘 늘어난 양"을 직접 알려 주면 그것이 가장 정확하다.
     reported = extra.get(spec.get("reported_daily"))
     if reported is not None:
@@ -62,7 +71,6 @@ def now_popular(conn, day: str, settings: dict) -> list[dict]:
     ):
         prev_by_item[row["item_id"]] = dict(row)  # 날짜순이라 마지막에 남는 것이 가장 최근 기록
 
-    modules = registry()
     entries = []
     for row in conn.execute(
         """
@@ -75,7 +83,7 @@ def now_popular(conn, day: str, settings: dict) -> list[dict]:
         snap = dict(row)
         snap["extra"] = json.loads(snap["extra"])
         snap["item_extra"] = json.loads(snap["item_extra"])
-        spec = modules[snap["source"]].VELOCITY
+        spec = module_for(snap["source"], settings["sources"][snap["source"]]).VELOCITY
         v, basis = velocity(spec, snap, prev_by_item.get(snap["item_id"]), snap["published_at"], cfg)
         snap.update(velocity=v, basis=basis, unit=spec["unit"])
         entries.append(snap)

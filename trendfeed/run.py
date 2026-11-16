@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from . import db
 from .fetch import Fetcher
-from .sources import registry
+from .sources import module_for
 
 STATUS_LABEL = {"ok": "정상", "warn": "주의", "empty": "입력 없음"}
 
@@ -18,11 +18,10 @@ STATUS_LABEL = {"ok": "정상", "warn": "주의", "empty": "입력 없음"}
 def collect_all(settings: dict, conn, day: str, only: str | None = None, fetch=None) -> list[dict]:
     fetch = fetch or Fetcher(settings["http"])
     summaries = []
-    for name, module in registry().items():
-        cfg = settings["sources"].get(name)
-        if not cfg or not cfg.get("enabled") or (only and name != only):
+    for name, cfg in settings["sources"].items():
+        if not cfg.get("enabled") or (only and name != only):
             continue
-        summaries.append(_collect_one(conn, day, name, module, cfg, fetch))
+        summaries.append(_collect_one(conn, day, name, module_for(name, cfg), cfg, fetch))
     return summaries
 
 

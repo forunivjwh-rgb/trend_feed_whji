@@ -20,7 +20,6 @@ from pathlib import Path
 
 from . import config, db, feed, rank, schedule
 from .run import STATUS_LABEL, collect_all
-from .sources import registry
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -31,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("daily", help="매일 하는 일 전부(자동 실행이 부르는 명령)")
 
     p = sub.add_parser("collect", help="오늘 치를 모아 저장한다")
-    p.add_argument("--source", choices=sorted(registry()), help="이 소스만 돌린다")
+    p.add_argument("--source", help="이 소스만 돌린다 (설정 파일의 [sources.이름])")
 
     p = sub.add_parser("status", help="쌓인 기록과 오늘 모은 것을 보여 준다")
     p.add_argument("--top", type=int, default=5, help="소스마다 보여 줄 항목 수")
@@ -198,7 +197,7 @@ def _rank(settings: dict, top: int, day: str | None) -> int:
 
 
 _METRIC_LABEL = {"views": "조회", "stars": "별", "score": "점수", "comments": "댓글", "likes": "좋아요"}
-_EXTRA_LABEL = {"forks": "포크", "stars_daily": "오늘 +별", "stars_weekly": "이번 주 +별"}
+_EXTRA_LABEL = {"forks": "포크", "stars_daily": "오늘 +별", "stars_weekly": "이번 주 +별", "downloads": "다운로드"}
 
 
 def _numbers(row) -> str:

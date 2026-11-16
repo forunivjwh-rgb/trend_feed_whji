@@ -28,7 +28,16 @@ class CollectResult:
 
 
 def registry() -> dict:
-    """설정 파일의 [sources.이름]과 같은 이름으로 수집원을 찾는다."""
-    from . import github_trending, hackernews
+    """수집 코드 모음. 설정 파일의 [sources.이름]은 같은 이름(또는 module 값)의 코드를 쓴다."""
+    from . import github_trending, hackernews, huggingface
 
-    return {"hackernews": hackernews, "github_trending": github_trending}
+    return {
+        "hackernews": hackernews,
+        "github_trending": github_trending,
+        "huggingface": huggingface,
+    }
+
+
+def module_for(name: str, cfg: dict):
+    """소스 이름과 그 설정으로 수집 코드를 찾는다. 한 코드를 여러 소스가 쓸 수 있다(예: 위키 한국어·영어)."""
+    return registry()[cfg.get("module", name)]

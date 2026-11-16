@@ -17,8 +17,8 @@ from . import config, rank
 from .run import STATUS_LABEL
 
 CSS = """
-:root{color-scheme:light;--plane:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;--text-secondary:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--chip-bg:#f0efec;--band:rgba(42,120,214,.10);--s1:#2a78d6;--s2:#eb6834;--good:#0ca30c;--warn:#fab219}
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--plane:#0d0d0d;--surface-1:#1a1a19;--text-primary:#f0efec;--text-secondary:#c3c2b7;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--chip-bg:#2c2c2a;--band:rgba(57,135,229,.18);--s1:#3987e5;--s2:#d95926}}
+:root{color-scheme:light;--plane:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;--text-secondary:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--chip-bg:#f0efec;--band:rgba(42,120,214,.10);--s1:#2a78d6;--s2:#eb6834;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--good:#0ca30c;--warn:#fab219}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--plane:#0d0d0d;--surface-1:#1a1a19;--text-primary:#f0efec;--text-secondary:#c3c2b7;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--chip-bg:#2c2c2a;--band:rgba(57,135,229,.18);--s1:#3987e5;--s2:#d95926;--s4:#c98500;--s5:#d55181;--s6:#0ca30c}}
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;font-size:14px;line-height:1.5;background:var(--plane);color:var(--text-primary);-webkit-text-size-adjust:100%}
 h1,h2,h3,p{margin:0}
@@ -37,6 +37,9 @@ h3{font-size:20px;line-height:1.35;overflow-wrap:anywhere}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--muted)}
 .dot[data-p="HN"]{background:var(--s1)}
 .dot[data-p="GH"]{background:var(--s2)}
+.dot[data-p="HF"]{background:var(--s4)}
+.dot[data-p="GN"]{background:var(--s5)}
+.dot[data-p="WK"]{background:var(--s6)}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:8px}
 .tile{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-1);min-width:0}
 .tile b{font-size:14px}
@@ -77,6 +80,9 @@ ICON_NOW = (
 _METRIC_LABEL = {"score": "점수", "stars": "전체 별", "comments": "댓글", "views": "조회", "likes": "좋아요"}
 
 
+_EXTRA_LABEL = {"forks": "포크", "downloads": "다운로드(최근 한 달)"}
+
+
 def _n(x: float) -> str:
     return f"{x:,.0f}"
 
@@ -104,8 +110,7 @@ def _card(e: dict, sources: dict) -> str:
     src = sources[e["source"]]
     nums = [("하루 증가량", f"+{_n(e['velocity'])}{e['unit']}"), ("이 소스의 보통 항목", f"+{_n(e['typical'])}{e['unit']}")]
     nums += [(label, _n(e[key])) for key, label in _METRIC_LABEL.items() if e.get(key) is not None]
-    if "forks" in e["extra"]:
-        nums.append(("포크", _n(e["extra"]["forks"])))
+    nums += [(label, _n(e["extra"][key])) for key, label in _EXTRA_LABEL.items() if key in e["extra"]]
     tiles = "".join(f'<div class="num"><span class="small">{escape(l)}</span><b>{escape(v)}</b></div>' for l, v in nums)
     desc = e["item_extra"].get("description")
     desc_html = f'<p class="sub" style="color:var(--text-primary)">{escape(desc)}</p>' if desc else ""
