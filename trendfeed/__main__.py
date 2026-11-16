@@ -18,7 +18,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import archive, config, db, deepread, feed, rank, schedule, topics
+from . import archive, config, db, deepread, feed, rank, schedule, topics, topicstore
 from .fetch import Fetcher
 from .run import STATUS_LABEL, collect_all
 
@@ -44,6 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top", type=int, default=15, help="보여 줄 주제 수")
     p.add_argument("--date", help="이 날짜 기준 (기본: 가장 최근에 모은 날)")
     p.add_argument("--review", action="store_true", help="LLM으로 이름 붙이기·합치기·떼어 내기까지 한다(키 필요)")
+    p.add_argument("--save", action="store_true", help="주제에 번호를 붙여 저장한다")
 
     p = sub.add_parser("feed", help="피드 페이지를 만든다")
     p.add_argument("--open", action="store_true", dest="open_page", help="만든 뒤 브라우저로 연다")
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "rank":
         return _rank(settings, args.top, args.date)
     if args.command == "topics":
-        return _topics(settings, args.top, args.date, args.review)
+        return _topics(settings, args.top, args.date, args.review, args.save)
     if args.command == "feed":
         return _feed(settings, args.date, args.open_page)
     if args.command == "import":
@@ -211,7 +212,7 @@ def _feed(settings: dict, day: str | None, open_page: bool, say=print) -> int:
     return 0
 
 
-def _topics(settings: dict, top: int, day: str | None, review: bool = False) -> int:
+def _topics(settings: dict, top: int, day: str | None, review: bool = False, save: bool = False) -> int:
     conn = db.connect(config.db_path(settings))
     day = day or conn.execute("SELECT MAX(date) FROM item_snapshots").fetchone()[0]
     if day is None:
@@ -235,12 +236,17 @@ def _topics(settings: dict, top: int, day: str | None, review: bool = False) -> 
             print(f"LLM 검토 1회 (입력 {usage['input_tokens']:,} · 출력 {usage['output_tokens']:,} 토큰)")
         for line in notes:
             print("  " + line)
+    if save:
+        before = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
+        found = topicstore.save_day(conn, day, found, settings)
+        total = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
+        print(f"주제 {len(found)}개를 저장했습니다 (새 번호 {max(total - before, 0)}개 · 이어받은 번호 {len(found) - max(total - before, 0)}개 · 전체 {total}개)")
     merged = [t for t in found if len(t["items"]) > 1]
     cross = [t for t in merged if len(t["platforms"]) > 1]
     print(f"[{day}] 항목 {len(entries)}개 → 주제 {len(found)}개 · 2건 이상 묶인 주제 {len(merged)}개 · 여러 플랫폼에 걸친 주제 {len(cross)}개")
     for t in (cross + [t for t in merged if t not in cross])[:top]:
-        if t["named_by_llm"]:
-            print(f"\n■ {t['name']}", end="")
+        if t["named_by_llm"] or t.get("code"):
+            print(f"\n■ {t.get('code', '')} {t['name']}".replace("■  ", "■ "), end="")
         print(f"\n● 플랫폼 {'·'.join(t['platforms'])} · 출처 {t['origins']}곳 · 항목 {len(t['items'])}건 · 어텐션 합 {t['attention']:.1f}")
         for e in t["items"][:6]:
             print(f"    [{settings['sources'][e['source']]['label']}] {e['title'][:70]}")

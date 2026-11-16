@@ -80,6 +80,32 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     output_tokens  INTEGER NOT NULL,
     PRIMARY KEY (created_at, purpose, ref)
 );
+
+CREATE TABLE IF NOT EXISTS topics (
+    code          TEXT PRIMARY KEY,     -- 주제 번호 (T-0731 꼴)
+    name          TEXT NOT NULL,
+    field         TEXT NOT NULL,        -- 분야
+    aliases       TEXT NOT NULL DEFAULT '[]',   -- 같은 주제에 붙었던 다른 이름들 (JSON)
+    first_seen    TEXT NOT NULL,        -- 처음 나타난 날
+    named_by_llm  INTEGER NOT NULL DEFAULT 0    -- 0이면 이름이 임시(가장 큰 항목의 제목)
+);
+
+CREATE TABLE IF NOT EXISTS topic_items (
+    item_id     INTEGER NOT NULL REFERENCES items(id),
+    date        TEXT NOT NULL,
+    topic_code  TEXT NOT NULL REFERENCES topics(code),
+    PRIMARY KEY (item_id, date)         -- 한 항목은 하루에 한 주제에만 속한다
+);
+
+CREATE TABLE IF NOT EXISTS topic_daily (
+    topic_code  TEXT NOT NULL REFERENCES topics(code),
+    date        TEXT NOT NULL,
+    attention   REAL NOT NULL,          -- 그날 주제에 묶인 항목들의 어텐션 합
+    platforms   TEXT NOT NULL,          -- 플랫폼별 값 (JSON)
+    origins     INTEGER NOT NULL,       -- 서로 다른 출처 수
+    item_count  INTEGER NOT NULL,
+    PRIMARY KEY (topic_code, date)
+);
 """
 
 
