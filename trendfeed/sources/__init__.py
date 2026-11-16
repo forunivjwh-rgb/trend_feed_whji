@@ -31,6 +31,10 @@ class SourceProblem(Exception):
     """이 소스를 오늘 수집하지 못한 이유. 글은 실행 기록과 피드에 그대로 보인다(비밀 값을 넣지 않는다)."""
 
 
+class Blocked(SourceProblem):
+    """상대 서버가 요청을 막았다. 고장이 아니라 그날은 건너뛸 일이라 '주의'로 남긴다."""
+
+
 def registry() -> dict:
     """수집 코드 모음. 설정 파일의 [sources.이름]은 같은 이름(또는 module 값)의 코드를 쓴다."""
     from . import geeknews, github_trending, hackernews, huggingface, wikipedia, youtube

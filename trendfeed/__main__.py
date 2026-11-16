@@ -18,7 +18,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, feed, rank, schedule
+from . import archive, config, db, feed, rank, schedule
 from .run import STATUS_LABEL, collect_all
 
 
@@ -43,6 +43,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--open", action="store_true", dest="open_page", help="만든 뒤 브라우저로 연다")
     p.add_argument("--date", help="이 날짜 기준 (기본: 가장 최근에 모은 날)")
 
+    p = sub.add_parser("import", help="날짜별 기록 파일로 저장 파일을 되살린다 (GitHub Actions 용)")
+    p.add_argument("--dir", type=Path, required=True, help="days/ 폴더가 들어 있는 곳")
+    p = sub.add_parser("export", help="하루치 기록을 날짜별 파일로 쓴다 (GitHub Actions 용)")
+    p.add_argument("--dir", type=Path, required=True, help="days/ 폴더를 둘 곳")
+    p.add_argument("--date", help="이 날짜 치 (기본: 오늘)")
+
     p = sub.add_parser("install-schedule", help="매일 자동 실행을 등록한다(윈도우·맥)")
     p.add_argument("--print", action="store_true", dest="print_only", help="등록하지 않고 내용만 본다")
     p.add_argument("--os", choices=["windows", "mac"], help="--print 와 함께: 어느 쪽 내용을 볼지")
@@ -65,6 +71,14 @@ def main(argv: list[str] | None = None) -> int:
         return _rank(settings, args.top, args.date)
     if args.command == "feed":
         return _feed(settings, args.date, args.open_page)
+    if args.command == "import":
+        conn = db.connect(config.db_path(settings))
+        print(f"기록 파일 {archive.import_all(conn, args.dir)}일 치를 읽어 저장 파일을 되살렸습니다.")
+        return 0
+    if args.command == "export":
+        conn = db.connect(config.db_path(settings))
+        print(f"기록 파일: {archive.export_day(conn, args.date or config.today(settings), args.dir)}")
+        return 0
     if args.command == "install-schedule":
         return _install_schedule(settings, args.print_only, args.os)
     if args.command == "uninstall-schedule":

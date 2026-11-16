@@ -119,6 +119,15 @@ def recently_listed(conn: sqlite3.Connection, day: str, source: str, days: int) 
     return [r[0] for r in rows]
 
 
+def listed_count(conn: sqlite3.Connection, day: str, source: str) -> int:
+    """그날 이 소스의 목록에 있었던 항목 수(하루에 여러 번 돌려도 한 항목은 한 번)."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM item_snapshots s JOIN items i ON i.id = s.item_id "
+        "WHERE i.source = ? AND s.date = ? AND s.listed = 1",
+        (source, day),
+    ).fetchone()[0]
+
+
 def save_run(
     conn: sqlite3.Connection,
     day: str,

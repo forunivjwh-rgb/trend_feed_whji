@@ -186,7 +186,7 @@ def build(conn, day: str, settings: dict) -> str:
     rest = [e for e in ranked if e["item_id"] not in shown]
     explore = random.Random(day).sample(rest, min(cfg["explore_n"], len(rest)))
 
-    ok = sum(r["status"] != "empty" for r in runs)
+    ok = sum(r["item_count"] > 0 for r in runs)
     total_items = sum(r["item_count"] for r in runs)
     started = min((r["started_at"] for r in runs), default=None)
     run_line = "오늘 실행 기록이 없어요."

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from . import db
 from .fetch import Fetcher
-from .sources import SourceProblem, module_for
+from .sources import Blocked, SourceProblem, module_for
 
 STATUS_LABEL = {"ok": "정상", "warn": "주의", "empty": "입력 없음"}
 
@@ -29,11 +29,13 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch) -> dict:
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     t0 = time.monotonic()
     records, followed, problems = [], [], []
+    blocked = False
     try:
         result = module.collect(cfg, fetch)
         records, problems = result.records, list(result.problems)
-    except SourceProblem as e:  # 소스가 이유를 직접 알려 준 경우(예: 키 없음)
+    except SourceProblem as e:  # 소스가 이유를 직접 알려 준 경우(예: 키 없음, 서버에서 막힘)
         problems.append(str(e))
+        blocked = isinstance(e, Blocked)
     except Exception as e:
         problems.append(f"수집 실패 ({_reason(e)})")
 
@@ -53,20 +55,26 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch) -> dict:
             except Exception as e:
                 problems.append(f"다시 확인 실패 ({_reason(e)})")
 
-    # 주의: 지금은 "일부만 실패"했을 때만 쓴다. "평소보다 크게 줄 때" 기준은
-    # 실제 수집량을 본 뒤 정한다(명세 9번 열린 항목).
-    status = "empty" if not records else ("warn" if problems else "ok")
-    summary = {
-        "source": name,
-        "item_count": len(records),
-        "followed_count": len(followed),
-        "status": status,
-        "memo": " · ".join(problems),
-        "started_at": started,
-        "duration_sec": time.monotonic() - t0,
-    }
     with conn:  # 한 소스의 저장은 전부 되거나 전부 안 되거나
         db.save_records(conn, day, name, records + followed, captured_at=started)
+        # 하루에 여러 번 돌 수 있으므로 건수는 "오늘 하루 목록에 있었던 항목 수"로 센다.
+        # 이번 실행이 실패해도 앞선 실행이 모은 것은 그대로 남는다.
+        day_count = db.listed_count(conn, day, name)
+        # 주의: "일부만 실패"했거나 상대 서버가 막았을 때 쓴다. "평소보다 크게 줄 때" 기준은
+        # 실제 수집량을 본 뒤 정한다(명세 9번 열린 항목).
+        if problems and (day_count or blocked):
+            status = "warn"
+        else:
+            status = "ok" if day_count else "empty"
+        summary = {
+            "source": name,
+            "item_count": day_count,
+            "followed_count": len(followed),
+            "status": status,
+            "memo": " · ".join(problems),
+            "started_at": started,
+            "duration_sec": time.monotonic() - t0,
+        }
         db.save_run(conn, day, **summary)
     return summary
 

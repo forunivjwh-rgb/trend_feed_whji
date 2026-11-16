@@ -11,7 +11,9 @@ import re
 import time
 from html.parser import HTMLParser
 
-from . import CollectResult, Record
+from . import Blocked, CollectResult, Record
+
+_REFUSED = {403, 429}  # "오지 마" 또는 "너무 자주 온다"는 응답
 
 # 하루 증가량을 잴 때 보는 숫자 (rank.py). GitHub는 오늘·이번 주에 늘어난 별을 직접 알려 준다.
 VELOCITY = {"metric": "stars", "unit": "별", "reported_daily": "stars_daily", "reported_weekly": "stars_weekly"}
@@ -156,12 +158,15 @@ def merge(by_period: dict[str, list[dict]]) -> list[Record]:
 def collect(cfg: dict, fetch) -> CollectResult:
     by_period: dict[str, list[dict]] = {}
     problems: list[str] = []
+    refused: set[int] = set()
     for n, period in enumerate(cfg["periods"]):
         if n:
             time.sleep(cfg["pause_sec"])
         try:
             html = fetch.get_text(f"{cfg['base_url']}?since={period}")
         except Exception as e:
+            if getattr(e, "code", None) in _REFUSED:
+                refused.add(e.code)
             problems.append(f"{period} 목록을 받지 못함 ({_reason(e)})")
             continue
         repos = parse(html)
@@ -169,6 +174,10 @@ def collect(cfg: dict, fetch) -> CollectResult:
             problems.append(f"{period} 목록 페이지에서 저장소를 찾지 못함 (화면 구조가 바뀌었을 수 있음)")
             continue
         by_period[period] = repos
+    if not by_period and refused:
+        # GitHub가 이 컴퓨터(서버)의 요청을 막은 것. 돌아가려 하지 않고 오늘은 건너뛴다.
+        codes = ", ".join(f"HTTP {c}" for c in sorted(refused))
+        raise Blocked(f"GitHub가 요청을 막아 건너뜀 ({codes})")
     return CollectResult(merge(by_period), problems)
 
 

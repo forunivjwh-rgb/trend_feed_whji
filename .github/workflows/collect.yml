@@ -1,0 +1,64 @@
+# 하루 4번 자동으로: 수집 → 숫자 기록을 data 브랜치에 쌓기 → 피드 화면을 GitHub Pages 에 올리기.
+# 사람이 할 일은 README 의 "GitHub Actions 로 자동 실행" 에 있다.
+name: 수집과 피드
+
+on:
+  schedule:
+    # 한국 시간 04:17 · 10:17 · 16:17 · 22:17 (여기는 UTC 로 적는다).
+    # 정각은 GitHub 가 붐벼서 자주 늦어지므로 17분으로 비켜 뒀다. 그래도 몇 분~수십 분 늦을 수 있다.
+    - cron: "17 1,7,13,19 * * *"
+  workflow_dispatch: # Actions 화면의 "Run workflow" 버튼으로 바로 돌릴 수 있게
+
+# 두 실행이 겹쳐 기록이 꼬이지 않게 한 번에 하나만 돈다.
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: 수집하고 기록 쌓기
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # data 브랜치에 기록을 올리려면 필요
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 키는 repo Secrets 에서 받아 실행하는 동안만 .env 에 둔다. 이 서버는 끝나면 통째로 지워진다.
+      - name: 키를 .env 에 두기
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: |
+          if [ -n "${YOUTUBE_API_KEY}" ]; then
+            printf 'YOUTUBE_API_KEY=%s\n' "${YOUTUBE_API_KEY}" > .env
+          else
+            echo "YOUTUBE_API_KEY 가 Secrets 에 없어 유튜브는 건너뜁니다."
+          fi
+
+      - name: 수집 · 피드 · 기록
+        run: bash scripts/actions_run.sh
+
+      - name: 피드 화면을 Pages 용으로 보관
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: data/feed
+
+  publish:
+    name: 피드를 웹 주소에 올리기
+    needs: collect
+    if: always() && needs.collect.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
