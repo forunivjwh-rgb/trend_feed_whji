@@ -5,6 +5,7 @@ from trendfeed.sources import github_trending as gh
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE = (FIXTURES / "github_trending_sample.html").read_text(encoding="utf-8")
+REAL_SHAPE = (FIXTURES / "github_trending_real_shape.html").read_text(encoding="utf-8")
 
 
 class ParseTest(unittest.TestCase):
@@ -29,8 +30,33 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(gh.parse("<html><body><h1>Sign in</h1></body></html>"), [])
 
 
+class RealShapeTest(unittest.TestCase):
+    """실제 페이지에서 뽑은 뼈대. 로그인 화면의 숨은 안내창(제목·문단)이 저장소 칸 안에 섞여 있다."""
+
+    def test_reads_real_page_structure(self):
+        repos = gh.parse(REAL_SHAPE)
+        self.assertEqual(
+            [(r["repo"], r["stars"], r["forks"], r["period_stars"], r["language"]) for r in repos],
+            [
+                ("ag-ui-protocol/ag-ui", 18406, 1894, 790, "TypeScript"),
+                ("backnotprop/plannotator", 12238, 1148, 689, "TypeScript"),
+                ("dream-num/univer", 27481, 2507, 1878, "TypeScript"),
+            ],
+        )
+
+    def test_description_is_the_repo_text_not_a_hidden_dialog(self):
+        first = gh.parse(REAL_SHAPE)[0]
+        self.assertEqual(
+            first["description"],
+            "AG-UI: the Agent-User Interaction Protocol. Bring Agents into Frontend Applications.",
+        )
+
+
 class RealPageTest(unittest.TestCase):
-    """실제 페이지를 저장한 파일(tests/fixtures/real/*.html)이 있으면 그것으로도 확인한다."""
+    """실제 페이지를 저장한 파일(tests/fixtures/real/*.html)이 있으면 그것으로도 확인한다.
+
+    로그인한 채 저장한 페이지에는 계정 정보가 들어 있어 이 폴더는 git에 올리지 않는다.
+    """
 
     def test_saved_real_pages(self):
         pages = sorted((FIXTURES / "real").glob("*.html"))
@@ -44,6 +70,7 @@ class RealPageTest(unittest.TestCase):
                     self.assertRegex(r["repo"], r"^[^/\s]+/[^/\s]+$")
                     self.assertIsNotNone(r["stars"], r["repo"])
                     self.assertIsNotNone(r["forks"], r["repo"])
+                    self.assertNotIn("{{", r["description"] or "", r["repo"])
                 with_period = [r for r in repos if r["period_stars"] is not None]
                 self.assertGreaterEqual(len(with_period), len(repos) // 2)
 

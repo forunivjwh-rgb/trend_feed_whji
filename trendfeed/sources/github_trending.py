@@ -40,7 +40,7 @@ class _TrendingParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         if tag == "article":
-            self._cur = {"repo": None, "text": [], "desc": [], "lang": [], "stars": [], "forks": []}
+            self._cur = {"repo": None, "desc_done": False, "text": [], "desc": [], "lang": [], "stars": [], "forks": []}
             self._in_h2 = self._in_p = self._in_lang = False
             self._link = None
             return
@@ -50,7 +50,9 @@ class _TrendingParser(HTMLParser):
         if tag == "h2":
             self._in_h2 = True
         elif tag == "p":
-            self._in_p = True
+            # 설명은 저장소 이름과 별 수 사이에 있는 첫 문단이다. 그 밖의 문단
+            # (로그인 화면에만 있는 숨은 안내창 등)은 설명이 아니다.
+            self._in_p = bool(cur["repo"]) and not cur["desc_done"]
         elif tag == "span" and a.get("itemprop") == "programmingLanguage":
             self._in_lang = True
         elif tag == "a":
@@ -63,6 +65,7 @@ class _TrendingParser(HTMLParser):
                 base = f"/{cur['repo']}"
                 if href == f"{base}/stargazers":
                     self._link = "stars"
+                    cur["desc_done"] = True
                 elif href in (f"{base}/forks", f"{base}/network/members"):
                     self._link = "forks"
 
@@ -74,6 +77,8 @@ class _TrendingParser(HTMLParser):
         elif tag == "h2":
             self._in_h2 = False
         elif tag == "p":
+            if self._in_p:
+                self._cur["desc_done"] = True
             self._in_p = False
         elif tag == "span":
             self._in_lang = False
