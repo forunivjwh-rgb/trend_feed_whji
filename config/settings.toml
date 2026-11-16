@@ -71,3 +71,30 @@ code = "GN"
 field = "한국 IT"
 weight = 1.0
 feed_url = "https://news.hada.io/rss/news"   # RSS 전체 (명세 3번). 표결이 없어 등장 횟수로 센다
+
+# Wikipedia는 언어판마다 조회수 크기가 달라 소스를 따로 둔다(각자 안에서 "보통의 몇 배"를 잰다).
+[sources.wikipedia_ko]
+enabled = true
+module = "wikipedia"         # 수집 코드는 같은 것을 쓴다
+label = "Wikipedia (한국어)"
+code = "WK"
+field = "문화·시사·밈"
+weight = 1.0
+api_base = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top"
+project = "ko.wikipedia"
+limit = 100                  # 일간 조회수 위에서 몇 개 (명세 3번)
+lookback_days = 3            # 어제 치가 아직 안 나왔으면 며칠 전까지 거슬러 찾는다
+pause_sec = 3.0              # 요청 사이에 쉬는 시간(초)
+
+[sources.wikipedia_en]
+enabled = true
+module = "wikipedia"
+label = "Wikipedia (영어)"
+code = "WK"
+field = "문화·시사·밈"
+weight = 1.0
+api_base = "https://wikimedia.org/api/rest_v1/metrics/pageviews/top"
+project = "en.wikipedia"
+limit = 100
+lookback_days = 3
+pause_sec = 3.0
