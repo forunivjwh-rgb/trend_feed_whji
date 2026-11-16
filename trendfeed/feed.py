@@ -472,6 +472,14 @@ def build(conn, day: str, settings: dict) -> str:
             f'<td>{r["item_count"]}건</td><td>{src.get("weight", "")}</td>'
             f'<td><span class="st {escape(r["status"])}"><i></i>{STATUS_LABEL[r["status"]]}</span></td><td>{escape(note)}</td></tr>'
         )
+    by_purpose = dict(conn.execute("SELECT purpose, COUNT(*) FROM llm_calls WHERE date = ? GROUP BY purpose", (day,)).fetchall())
+    tin, tout = conn.execute("SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) FROM llm_calls "
+                             "WHERE date = ?", (day,)).fetchone()
+    run_facts = (f"실탐 시간 예산 {settings['deepread']['budget_minutes']}분 · 임계 {settings['score']['threshold']}"
+                 + (" (기준선 14일 뒤부터 씀)" if mode == "early" else "")
+                 + f" · LLM {sum(by_purpose.values())}회(이름·병합 {by_purpose.get('topics', 0)} · 실탐 "
+                 f"{by_purpose.get('deepread', 0)} · 왜 올랐나 {by_purpose.get('why', 0)}) · 토큰 입력 {tin:,} · 출력 {tout:,}"
+                 f" · 모델 {settings['llm']['model']}")
     pipeline = (f"수집 {total_items}건 → 주제 {len(topics_today)}개 → 순위 {len(ranked)}개"
                 + (f" → 임계 통과 {passed}개" if mode != "early" else "") + f" → 실탐 요약이 붙은 주제 {reads}개")
 
@@ -541,7 +549,8 @@ def build(conn, day: str, settings: dict) -> str:
       <tr><th>소스</th><th>분야</th><th>수집</th><th>가중치</th><th>상태</th><th>비고</th></tr>
       {"".join(status_rows) or '<tr><td colspan="6">오늘 실행 기록이 없어요.</td></tr>'}
     </table></div>
-    <p class="sub">{escape(pipeline)}</p></div>
+    <p class="sub">{escape(pipeline)}</p>
+    <p class="sub">{escape(run_facts)}</p></div>
   </section>
 </div>
 </body>
