@@ -27,9 +27,17 @@ min_gap_hours = 6            # 이전 기록과 이보다 가까우면 비교하
 compare_within_days = 3      # 이보다 오래된 이전 기록과는 비교하지 않는다
 median_floor = 1.0           # 가운데 값이 이보다 작으면 이 값으로 나눈다(0으로 나누기 방지)
 
+[feed]
+path = "data/feed/index.html"   # 피드 페이지를 쓰는 곳. repo 폴더 기준
+baseline_days = 14           # 이만큼 쌓이기 전에는 "지금 인기" 모드 (명세 5번)
+top_n = 5                    # 맨 위 카드 수
+per_source_n = 3             # 분야별 구역에서 소스마다 보여 줄 수
+explore_n = 5                # 탐색 슬롯에 무작위로 뽑는 수
+
 [sources.hackernews]
 enabled = true
 label = "Hacker News"
+code = "HN"                  # 화면에서 색 점을 고르는 짧은 이름
 field = "개발·OSS"
 weight = 1.0                 # 어텐션에 곱하는 소스 가중치 (명세 3번)
 api_base = "https://hacker-news.firebaseio.com/v0"
@@ -40,6 +48,7 @@ follow_days = 2              # 인기글 목록에서 빠진 글도 이 날수�
 [sources.github_trending]
 enabled = true
 label = "GitHub trending"
+code = "GH"
 field = "개발·OSS"
 weight = 1.0
 base_url = "https://github.com/trending"

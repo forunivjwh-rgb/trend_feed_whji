@@ -2,6 +2,7 @@
 
     python -m trendfeed daily              매일 하는 일 전부(자동 실행이 부르는 명령)
     python -m trendfeed collect            오늘 치를 모아 저장한다
+    python -m trendfeed feed --open        피드 페이지를 만들어 브라우저로 연다
     python -m trendfeed status             쌓인 기록과 오늘 모은 것을 보여 준다
     python -m trendfeed install-schedule   매일 자동 실행을 등록한다(윈도우·맥)
 """
@@ -12,11 +13,12 @@ import argparse
 import json
 import subprocess
 import sys
+import webbrowser
 import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, rank, schedule
+from . import config, db, feed, rank, schedule
 from .run import STATUS_LABEL, collect_all
 from .sources import registry
 
@@ -38,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top", type=int, default=10, help="보여 줄 항목 수")
     p.add_argument("--date", help="이 날짜 기준 (기본: 오늘)")
 
+    p = sub.add_parser("feed", help="피드 페이지를 만든다")
+    p.add_argument("--open", action="store_true", dest="open_page", help="만든 뒤 브라우저로 연다")
+    p.add_argument("--date", help="이 날짜 기준 (기본: 가장 최근에 모은 날)")
+
     p = sub.add_parser("install-schedule", help="매일 자동 실행을 등록한다(윈도우·맥)")
     p.add_argument("--print", action="store_true", dest="print_only", help="등록하지 않고 내용만 본다")
     p.add_argument("--os", choices=["windows", "mac"], help="--print 와 함께: 어느 쪽 내용을 볼지")
@@ -58,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         return _status(settings, args.top)
     if args.command == "rank":
         return _rank(settings, args.top, args.date)
+    if args.command == "feed":
+        return _feed(settings, args.date, args.open_page)
     if args.command == "install-schedule":
         return _install_schedule(settings, args.print_only, args.os)
     if args.command == "uninstall-schedule":
@@ -85,11 +93,13 @@ def _daily(settings: dict) -> int:
             f.write(text + "\n")
 
     say(f"--- {datetime.now().astimezone().isoformat(timespec='seconds')} 시작")
-    try:
-        code = _collect(settings, None, say)
-    except Exception:
-        say(traceback.format_exc())
-        code = 1
+    code = 0
+    for step in (lambda: _collect(settings, None, say), lambda: _feed(settings, config.today(settings), False, say)):
+        try:  # 수집이 전부 실패한 날에도 피드는 만든다(막힌 이유가 화면에 보이게)
+            code = step() or code
+        except Exception:
+            say(traceback.format_exc())
+            code = 1
     say("--- 끝" if code == 0 else "--- 끝 (문제 있음)")
     return code
 
@@ -153,6 +163,19 @@ def _status(settings: dict, top: int) -> int:
         for r in rows:
             print(f"  {r['rank']:>2}. {r['title'][:70]}")
             print(f"      {_numbers(r)} · 출처 {r['origin']}")
+    return 0
+
+
+def _feed(settings: dict, day: str | None, open_page: bool, say=print) -> int:
+    conn = db.connect(config.db_path(settings))
+    day = day or conn.execute("SELECT MAX(date) FROM source_runs").fetchone()[0]
+    if day is None:
+        say("아직 저장된 것이 없습니다. 먼저 `python -m trendfeed collect` 를 돌려 주세요.")
+        return 1
+    path = feed.write(conn, day, settings)
+    say(f"[{day}] 피드 페이지: {path}")
+    if open_page:
+        webbrowser.open(path.as_uri())
     return 0
 
 
