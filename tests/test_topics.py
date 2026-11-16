@@ -171,6 +171,24 @@ class ReviewTest(unittest.TestCase):
         self.assertEqual(sorted(len(t["items"]) for t in result), sorted(len(t["items"]) for t in self.found))
         self.assertEqual(log, [])
 
+    def test_removal_that_contradicts_the_topic_name_is_refused(self):
+        # 실제 실행에서 나온 잘못: '에이티즈 신곡 MV' 주제에서 '에이티즈' 문서를 떼어 내라고 했다
+        nvidia, jensen = self.topic_of("Nvidia"), self.topic_of("젠슨 황")
+        review = {"topics": [
+            {"id": f"T{nvidia}", "name": "Nvidia 전망", "remove_items": [f"I{self.number_of('Nvidia')}"]},
+            {"id": f"T{jensen}", "name": "회사 소식", "remove_items": [f"I{self.number_of('젠슨 황')}"]},
+        ], "merges": []}
+        result, log = topics.apply_review(self.found, self.picked, self.where, review, SETTINGS, self.vectors)
+        by_name = {t["name"]: t for t in result}
+        self.assertEqual(len(by_name["Nvidia 전망"]["items"]), 2)  # 이름에 Nvidia 가 있으니 문서를 남긴다
+        self.assertEqual(len(by_name["회사 소식"]["items"]), 1)    # 이름과 상관없으면 LLM 말대로 떼어 낸다
+        self.assertEqual([l.split("(")[0].split(":")[0].strip() for l in log], ["떼어 내기 거절", "떼어 냄"])
+
+    def test_prompt_tells_the_llm_to_keep_articles_about_the_subject(self):
+        from trendfeed import llm
+        for text in ("그 주제의 대상", "떼어 내지 않습니다", "낱말만 우연히 같고", "분야만 같은 모음", "T로 시작"):
+            self.assertIn(text, llm.REVIEW_SYSTEM)
+
     def test_code_rejects_merges_of_unrelated_topics(self):
         # 실제 실행에서 나온 잘못: LLM이 관계없는 주제를 합치라고 했다(문무왕 + Salon 기사, 뜻 비슷함 0.12)
         nvidia, korea = self.topic_of("Nvidia"), self.topic_of("대한민국")

@@ -189,6 +189,12 @@ def apply_review(found: list[dict], picked: list[dict], where: dict, review: dic
             # 그 주제에 실제로 들어 있는 항목만, 그리고 주제가 비지 않을 때만 떼어 낸다
             if where.get(item_no, (None,))[0] == t_no and len(members[t_no]) > 1:
                 item = picked[t_no - 1]["items"][where[item_no][1]]
+                # LLM이 스스로 붙인 주제 이름에 그 항목의 이름이 들어 있으면 앞뒤가 안 맞는 판단이다
+                # (예: '에이티즈 신곡 MV' 주제에서 '에이티즈' 문서를 떼어 내라). 떼어 내지 않는다.
+                own = _name_of(item["title"])
+                if len(own) >= cfg["name_min_chars"] and own in names.get(t_no, "").lower():
+                    log.append(f"떼어 내기 거절(주제 이름에 그 이름이 있음): '{item['title'][:30]}' ← '{names[t_no][:30]}'")
+                    continue
                 if item in members[t_no]:
                     members[t_no].remove(item)
                     loose.append(item)
