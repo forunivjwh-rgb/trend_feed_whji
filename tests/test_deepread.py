@@ -179,3 +179,58 @@ class LlmSettingsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewReadersTest(unittest.TestCase):
+    """유튜브(설명란·댓글)와 GeekNews(피드의 요약 본문)를 읽는 법."""
+
+    CFG = {**SETTINGS["deepread"], "max_chars": 12000, "comments": 20}
+
+    def test_youtube_reads_description_and_top_comments(self):
+        from tests.test_youtube import with_key
+
+        class Fetch:
+            def __init__(self):
+                self.urls = []
+
+            def get_json(self, url, headers=None):
+                self.urls.append(url)
+                if "/commentThreads" in url:
+                    return {"items": [{"snippet": {"topLevelComment": {"snippet": {"textOriginal": f"댓글 {i}"}}}}
+                                      for i in range(3)]}
+                return {"items": [{"id": "vid1", "snippet": {"title": "t", "description": "신곡 'Angel Bite' 공식 뮤직비디오"}}]}
+
+        e = {"source": "youtube", "external_id": "vid1"}
+        fetch = Fetch()
+        with with_key():
+            material, scope = deepread._read_youtube(e, self.CFG, SETTINGS["sources"], fetch)
+        self.assertIn("[설명란]\n신곡 'Angel Bite' 공식 뮤직비디오", material)
+        self.assertIn("[댓글]\n- 댓글 0\n- 댓글 1", material)
+        self.assertEqual(scope, "설명란 24자 · 댓글 상위 3")
+        self.assertTrue(any("maxResults=20" in u and "order=relevance" in u for u in fetch.urls))
+
+    def test_youtube_without_a_key_reads_nothing(self):
+        from tests.test_youtube import with_key
+        from trendfeed.sources import SourceProblem
+
+        with with_key(None), self.assertRaises(SourceProblem):
+            deepread._read_youtube({"source": "youtube", "external_id": "v"}, self.CFG, SETTINGS["sources"], None)
+
+    def test_geeknews_reads_the_summary_inside_the_feed(self):
+        from tests.test_geeknews import FEED
+
+        class Fetch:
+            def get_text(self, url, headers=None):
+                assert url == SETTINGS["sources"]["geeknews"]["feed_url"]
+                return FEED
+
+        e = {"source": "geeknews", "external_id": "37285"}
+        material, scope = deepread._read_geeknews(e, self.CFG, SETTINGS["sources"], Fetch())
+        self.assertEqual(material, "긴 요약 본문은 저장하지 않는다")
+        self.assertEqual(scope, "GeekNews 요약 17자")
+        e2 = {"source": "geeknews", "external_id": "99999"}  # 피드에서 이미 빠진 글
+        self.assertEqual(deepread._read_geeknews(e2, self.CFG, SETTINGS["sources"], Fetch())[0], "")
+
+    def test_every_source_now_has_a_reader(self):
+        modules = {cfg.get("module", name) for name, cfg in SETTINGS["sources"].items()}
+        self.assertEqual(modules - set(deepread.READERS), set())

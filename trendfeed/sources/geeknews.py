@@ -47,3 +47,14 @@ def parse(xml: str) -> list[Record]:
 
 def collect(cfg: dict, fetch) -> CollectResult:
     return CollectResult(parse(fetch.get_text(cfg["feed_url"])))
+
+
+def summary_of(xml: str, topic_id: str) -> str:
+    """피드에 든 글 하나의 요약 본문(HTML)을 돌려준다. 없으면 빈 문자열. 실탐에서만 쓰고 저장하지 않는다."""
+    root = ElementTree.fromstring(xml)
+    for entry in root.findall("a:entry", _ATOM):
+        url = (entry.findtext("a:id", "", _ATOM) or "").strip()
+        m = _TOPIC_ID.search(url)
+        if (m.group(1) if m else url) == topic_id:
+            return entry.findtext("a:content", "", _ATOM) or ""
+    return ""
