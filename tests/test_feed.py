@@ -93,7 +93,8 @@ class FeedTest(unittest.TestCase):
 
     def test_every_section_and_source_row_is_there(self):
         for text in ("분야별 Top 3", "탐색 슬롯", "수집 상태와 오늘의 실행", "Hacker News", "GitHub trending", "14건", "정상",
-                     "메타만", "수집 15건 → 주제 15개 → 순위 15개"):
+                     "메타만", "수집 15건 → 주제 15개 → 순위 15개",
+                     "실탐 시간 예산 90분 · 임계 5.0 (기준선 14일 뒤부터 씀) · LLM 0회(이름·병합 0 · 실탐 0 · 왜 올랐나 0)"):
             self.assertIn(text, self.html)
 
     def test_same_day_rebuild_is_identical(self):

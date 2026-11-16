@@ -235,21 +235,39 @@ uv run python -m trendfeed collect --source youtube
 
 | 위치 | 내용 |
 | --- | --- |
-| `config/settings.toml` | 숫자와 한도 전부(수집 개수, 시각, 다시 시도 횟수 등). 코드에는 박지 않는다 |
-| `data/trend.db` | 저장 파일(SQLite). git에 올리지 않는다. 이 파일만 복사하면 백업이다 |
+| `config/settings.toml` | 숫자와 한도 전부(수집 개수, 점수 상수, 임계, 시간 예산, 모델 이름 등). 코드에는 박지 않는다 |
+| `.github/workflows/collect.yml` | 하루 4번 자동 실행(수집 → 주제 → 실탐 → 피드 → 기록 → Pages) |
+| `.github/workflows/topics.yml` | 손으로 돌려 보는 "주제 후보 보기"(저장하지 않음) |
+| `data` 브랜치의 `days/` | 날짜별 기록 파일. 실행할 때마다 여기서 저장 파일을 되살린다 |
+| `data/trend.db` | 저장 파일(SQLite). git에 올리지 않는다 |
 | `data/feed/index.html` | 피드 화면. 매일 실행이 끝나면 새로 쓴다 |
-| `data/logs/daily.log` | 자동 실행 기록 |
-| `trendfeed/rank.py` | 하루 증가량과 "지금 인기" 순위 계산 |
-| `trendfeed/feed.py` | 피드 화면 만들기 |
+| `data/logs/daily.log` | 실행 기록(내 컴퓨터에서 돌릴 때) |
 | `trendfeed/sources/` | 수집원 하나당 파일 하나 |
+| `trendfeed/rank.py` | 글의 하루 증가량과 어텐션(보통의 몇 배) |
+| `trendfeed/topics.py` | 주제 묶기와 LLM 검토(이름·합치기·떼어 내기) 적용 |
+| `trendfeed/topicstore.py` | 주제 번호 이어받기와 저장 |
+| `trendfeed/score.py` | 주제 점수(z·가속·폭), 순위, 탐색 뽑기 |
+| `trendfeed/deepread.py` | 실탐(원문 읽기와 요약) |
+| `trendfeed/why.py` | "왜 올랐나" 한 문장 |
+| `trendfeed/rollup.py` | 롤업(일·주·월) |
+| `trendfeed/feedback.py` | "몰랐는데 흥미로움" 표시 읽기 |
+| `trendfeed/llm.py` | LLM 부르는 곳(이 파일 한 곳) |
+| `trendfeed/feed.py` | 피드 화면 만들기 |
+| `trendfeed/archive.py` | 날짜별 기록 파일 쓰기·되살리기 |
 | `trendfeed/db.py` | 표 구조 |
 | `tests/` | 자동 시험. `uv run python -m unittest discover -s tests -t .` |
 
-저장 파일 안의 표는 셋이다(명세 8번).
+저장 파일 안의 표(명세 8번):
 
 - `source_runs`: 소스별 하루 실행 기록. 건수와 상태(정상 / 주의 / 입력 없음), 이유.
-- `items`: 수집한 글·저장소 하나. 제목, 링크, 출처, 처음 수집한 날.
-- `item_snapshots`: 항목의 하루치 숫자. 기준선을 만드는 재료라 계속 남긴다.
+- `items`, `item_snapshots`: 수집한 글·저장소·문서·영상과 그 하루치 숫자. 기준선의 재료라 계속 남긴다.
+- `topics`, `topic_items`, `topic_daily`: 주제(번호·이름·별칭·처음 나타난 날), 그날 주제에 속한 글, 그날의 어텐션(플랫폼별).
+- `topic_score`: 그날의 z·가속·폭·점수·순위·임계 통과. 기록 파일에는 넣지 않고 되살릴 때 다시 계산한다.
+- `deepreads`, `topic_why`: 실탐 요약과 읽은 범위, "왜 올랐나" 문장.
+- `feedback`: "몰랐는데 흥미로움" 표시.
+- `llm_calls`: LLM 호출마다 용도·모델·토큰 수.
+
+원문(본문·자막·댓글)은 실행 중에만 쓰고 저장하지 않는다. 그래서 명세의 "2~3일 뒤 지우기"는 따로 할 일이 없다.
 
 ## 알아 둘 것
 
