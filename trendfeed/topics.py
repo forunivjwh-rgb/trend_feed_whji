@@ -29,13 +29,26 @@ def embed(texts: list[str], cfg: dict):
     return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
 
-def text_of(e: dict) -> str:
-    """뜻을 볼 글자: 제목과, 있으면 짧은 설명. '소유자/저장소-이름' 꼴은 단어로 풀어 쓴다."""
+def text_of(e: dict, ignore_chars: str = "") -> str:
+    """뜻을 볼 글자: 제목과, 있으면 설명·채널 이름·댓글에서 반복되는 말.
+
+    유튜브 제목은 "정말 달콤해"처럼 그것만으로는 뜻을 알 수 없는 것이 많아서, 이미 모아 둔
+    채널 이름과 댓글의 반복되는 말을 보탠다. '소유자/저장소-이름' 꼴은 단어로 풀어 쓴다.
+    """
     title = e["title"]
     if "/" in title and " " not in title:
         title = re.sub(r"[/_\-.]+", " ", title)
-    desc = e["item_extra"].get("description")
-    return f"{title}. {desc}" if desc else title
+    parts = [title]
+    if e["item_extra"].get("description"):
+        parts.append(e["item_extra"]["description"])
+    if e["item_extra"].get("channel_title"):
+        parts.append(f"채널: {e['item_extra']['channel_title']}")
+    noise = set(ignore_chars)
+    said = [p["text"] for p in e.get("extra", {}).get("comment_phrases", [])
+            if not (noise and set(p["text"].replace(" ", "")) <= noise)]
+    if said:
+        parts.append("댓글: " + ", ".join(said))
+    return ". ".join(parts)
 
 
 def _name_of(title: str) -> str:
@@ -61,6 +74,7 @@ def cluster(entries: list[dict], vectors, settings: dict) -> list[dict]:
     cfg, sources = settings["topics"], settings["sources"]
     by_name = [i for i, e in enumerate(entries) if sources[e["source"]].get("topic_match") == "name"]
     by_meaning = [i for i in range(len(entries)) if i not in set(by_name)]
+    meaning_set = set(by_meaning)
 
     # 1) 뜻으로 묶기: 묶음 안 모든 항목과의 평균 비슷함이 기준 이상인, 가장 비슷한 묶음에 넣는다.
     groups: list[list[int]] = []
@@ -81,9 +95,18 @@ def cluster(entries: list[dict], vectors, settings: dict) -> list[dict]:
 
     for i in by_name:
         name = _name_of(entries[i]["title"])
+        # 제목에 괄호가 붙은 문서('Scene (2026 film)')는 위키가 "헷갈리는 이름"이라고 표시한 것이다.
+        # 그런 이름은 글자가 나오는 것만으로는 붙이지 않고, 뜻도 어느 정도 비슷해야 붙인다.
+        ambiguous = entries[i]["title"].rstrip().endswith(")")
+
+        def matches(j, i=i, name=name, ambiguous=ambiguous):
+            if j not in meaning_set or not _mentions(name, entries[j]["title"]):
+                return False
+            return not ambiguous or float(vectors[i] @ vectors[j]) >= cfg["name_min_similarity"]
+
         hits = []
         if len(name) >= cfg["name_min_chars"]:
-            hits = [g for g in groups if any(j in by_meaning and _mentions(name, entries[j]["title"]) for j in g)]
+            hits = [g for g in groups if any(matches(j) for j in g)]
         if hits:
             max(hits, key=weight).append(i)
         else:

@@ -10,7 +10,7 @@ except ImportError:  # 주제 묶기 도구를 설치하지 않은 곳에서는 
 from trendfeed import config, topics
 
 SETTINGS = config.load()
-SETTINGS["topics"] = {**SETTINGS["topics"], "threshold": 0.85, "name_min_chars": 3}
+SETTINGS["topics"] = {**SETTINGS["topics"], "threshold": 0.85, "name_min_chars": 3, "name_min_similarity": 0.45}
 
 
 def entry(source, title, attention, origin=None, desc=None):
@@ -68,6 +68,33 @@ class ClusterTest(unittest.TestCase):
         entries = [entry("wikipedia_ko", "가야", 5.0), entry("geeknews", "집에 가야 한다", 1.0)]
         found = topics.cluster(entries, np.array([unit(1, 0), unit(1, 0)]), SETTINGS)
         self.assertEqual(len(found), 2)  # 두 글자 이름은 쓰지 않는다
+
+    def test_ambiguous_names_with_parentheses_also_need_similar_meaning(self):
+        # 실제로 나온 틀린 짝: 위키 'Scene (2026 film)' ↔ 'Print Scene' 이 들어간 글 (뜻 비슷함 0.40)
+        entries = [
+            entry("wikipedia_en", "Scene (2026 film)", 5.0),
+            entry("hackernews", "Has the Independent Print Scene Outgrown Expozine?", 2.0),
+            entry("wikipedia_ko", "김지원 (배우)", 4.0),
+            entry("youtube", "[최종회 예고] 환자의 수술을 중단한 김지원", 3.0),
+            entry("wikipedia_ko", "에이티즈", 6.0),
+            entry("youtube", "ATEEZ(에이티즈) - 'UP' Official MV", 9.0),
+        ]
+        vectors = np.array([
+            unit(1, 0, 0, 0, 0, 0), unit(0.40, 0.92, 0, 0, 0, 0),   # 비슷함 0.40 → 붙이지 않는다
+            unit(0, 0, 1, 0, 0, 0), unit(0, 0, 0.50, 0.87, 0, 0),   # 비슷함 0.50 → 붙인다
+            unit(0, 0, 0, 0, 1, 0), unit(0, 0, 0, 0, 0.27, 0.96),   # 괄호 없는 이름은 뜻을 묻지 않는다
+        ])
+        titles = [sorted(e["title"] for e in t["items"]) for t in topics.cluster(entries, vectors, SETTINGS)]
+        self.assertIn(["Scene (2026 film)"], titles)
+        self.assertIn(sorted(["김지원 (배우)", "[최종회 예고] 환자의 수술을 중단한 김지원"]), titles)
+        self.assertIn(sorted(["에이티즈", "ATEEZ(에이티즈) - 'UP' Official MV"]), titles)
+
+    def test_youtube_text_adds_channel_and_repeated_comment_words_without_laughter(self):
+        e = entry("youtube", "정말 달콤해", 1.0)
+        e["item_extra"] = {"channel_title": "빵굽는집"}
+        e["extra"] = {"comment_phrases": [{"text": "ㅋㅋㅋㅋㅋ", "count": 5}, {"text": "소금빵 레시피", "count": 4}]}
+        self.assertEqual(topics.text_of(e, "ㅋㅎㅠ"), "정말 달콤해. 채널: 빵굽는집. 댓글: 소금빵 레시피")
+        self.assertEqual(topics.text_of(entry("youtube", "제목만", 1.0), "ㅋㅎㅠ"), "제목만")
 
     def test_text_for_meaning_unpacks_repo_names_and_adds_description(self):
         e = entry("github_trending", "acme/rocket-launcher", 1.0, desc="A tiny launcher")
