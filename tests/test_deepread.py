@@ -121,6 +121,24 @@ class DeepreadTest(unittest.TestCase):
         self.assertEqual((result["read"], len(client.calls)), (0, 1))
         self.assertIn("남은 실탐은 건너뜀", result["note"])
 
+    def test_reads_one_representative_article_per_top_topic(self):
+        from tests.test_feed import make_topics
+        make_topics(self.conn, DAY, SETTINGS)
+        # 문서 1과 2를 한 주제로 묶어 둔다 → 그 주제에서는 어텐션이 큰 문서 1만 읽는다
+        code1, code2 = (self.conn.execute(
+            "SELECT m.topic_code FROM topic_items m JOIN items i ON i.id = m.item_id WHERE i.external_id = ?", (x,)
+        ).fetchone()[0] for x in ("문서_1", "문서_2"))
+        self.conn.execute("UPDATE topic_items SET topic_code = ? WHERE topic_code = ?", (code1, code2))
+        self.conn.execute("DELETE FROM topic_score WHERE topic_code = ?", (code2,))
+        self.conn.commit()
+        client = FakeClient()
+        result = self.run_it(client)
+        self.assertEqual(result["read"], 10)
+        titles = [c["messages"][0]["content"].split("\n")[0] for c in client.calls]
+        self.assertIn("제목: 문서 1", titles)
+        self.assertNotIn("제목: 문서 2", titles)
+        self.assertIn("제목: 문서 11", titles)  # 한 자리가 비어 다음 주제가 들어온다
+
     def test_without_a_key_only_this_step_is_skipped(self):
         with mock.patch.object(config, "secret", lambda name: None):
             result = deepread.run(self.conn, DAY, SETTINGS, Fetch(), say=self.said.append)
@@ -131,9 +149,12 @@ class DeepreadTest(unittest.TestCase):
         self.assertIn("지금 인기 Top 5", html)  # 피드는 그대로 나온다
 
     def test_summary_shows_on_the_card_and_survives_the_day_files(self):
+        from tests.test_feed import make_topics
+        make_topics(self.conn, DAY, SETTINGS)
         self.run_it(FakeClient())
         html = feed.build(self.conn, DAY, SETTINGS)
-        for text in ("실탐 요약", "위키 문서다", "방송에 나와서", "읽은 범위: 문서 본문", "실탐 10건 · LLM 10회 (입력 12,000 · 출력 1,500 토큰)"):
+        for text in ("실탐 요약", "위키 문서다", "방송에 나와서", "읽은 범위: 문서 본문", "실탐 10건 · LLM 10회 (입력 12,000 · 출력 1,500 토큰)",
+                     "실탐</span>"):
             self.assertIn(text, html)
         with tempfile.TemporaryDirectory() as tmp:
             archive.export_day(self.conn, DAY, Path(tmp))

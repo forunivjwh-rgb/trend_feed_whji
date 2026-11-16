@@ -18,7 +18,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import archive, config, db, deepread, feed, rank, schedule, topics, topicstore
+from . import archive, config, db, deepread, feed, rank, schedule, topicrun, topics, why
 from .fetch import Fetcher
 from .run import STATUS_LABEL, collect_all
 
@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top", type=int, default=15, help="보여 줄 주제 수")
     p.add_argument("--date", help="이 날짜 기준 (기본: 가장 최근에 모은 날)")
     p.add_argument("--review", action="store_true", help="LLM으로 이름 붙이기·합치기·떼어 내기까지 한다(키 필요)")
-    p.add_argument("--save", action="store_true", help="주제에 번호를 붙여 저장한다")
+    p.add_argument("--save", action="store_true", help="주제에 번호를 붙여 저장하고 점수·순위까지 매긴다")
 
     p = sub.add_parser("feed", help="피드 페이지를 만든다")
     p.add_argument("--open", action="store_true", dest="open_page", help="만든 뒤 브라우저로 연다")
@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         return _feed(settings, args.date, args.open_page)
     if args.command == "import":
         conn = db.connect(config.db_path(settings))
-        print(f"기록 파일 {archive.import_all(conn, args.dir)}일 치를 읽어 저장 파일을 되살렸습니다.")
+        print(f"기록 파일 {archive.import_all(conn, args.dir, settings)}일 치를 읽어 저장 파일을 되살렸습니다.")
         return 0
     if args.command == "export":
         conn = db.connect(config.db_path(settings))
@@ -118,7 +118,9 @@ def _daily(settings: dict) -> int:
     code = 0
     steps = (
         lambda: _collect(settings, None, say),
-        lambda: _deepread(settings, say),  # LLM 키가 없으면 이 단계만 건너뛴다
+        lambda: _topic_step(settings, say),  # 묶기 도구가 없으면 글 하나를 주제 하나로 둔다
+        lambda: _deepread(settings, say),    # LLM 키가 없으면 이 단계만 건너뛴다
+        lambda: _why(settings, say),         # LLM 키가 없으면 이 단계만 건너뛴다
         lambda: _feed(settings, config.today(settings), False, say),
     )
     for step in steps:
@@ -129,6 +131,18 @@ def _daily(settings: dict) -> int:
             code = 1
     say("--- 끝" if code == 0 else "--- 끝 (문제 있음)")
     return code
+
+
+def _topic_step(settings: dict, say=print) -> int:
+    conn = db.connect(config.db_path(settings))
+    _say_topic_step(topicrun.run(conn, config.today(settings), settings, review=True), say)
+    return 0  # 주제 단계가 안 돼도 수집과 피드는 정상으로 친다
+
+
+def _why(settings: dict, say=print) -> int:
+    conn = db.connect(config.db_path(settings))
+    why.run(conn, config.today(settings), settings, say=say)
+    return 0
 
 
 def _deepread(settings: dict, say=print) -> int:
@@ -218,6 +232,14 @@ def _topics(settings: dict, top: int, day: str | None, review: bool = False, sav
     if day is None:
         print("아직 저장된 것이 없습니다.")
         return 0
+    if save:
+        result = topicrun.run(conn, day, settings, review=review)
+        _say_topic_step(result, print)
+        if result["ok"]:
+            _print_ranked_topics(conn, day, settings, top)
+        return 0 if result["ok"] else 1
+
+    # 저장하지 않고 묶음만 미리 본다
     entries = rank.now_popular(conn, day, settings)
     try:
         texts = [topics.text_of(e, settings["sources"][e["source"]].get("phrase_ignore_chars", "")) for e in entries]
@@ -228,31 +250,53 @@ def _topics(settings: dict, top: int, day: str | None, review: bool = False, sav
     found = topics.cluster(entries, vectors, settings)
     if review:
         found, notes, usage = topics.review(found, settings, vectors=vectors)
-        if usage:
-            now = datetime.now().astimezone().isoformat(timespec="seconds")
-            with conn:
-                db.save_llm_call(conn, day, created_at=now, purpose="topics", ref=day,
-                                 model=settings["llm"]["model"], **usage)
-            print(f"LLM 검토 1회 (입력 {usage['input_tokens']:,} · 출력 {usage['output_tokens']:,} 토큰)")
-        for line in notes:
-            print("  " + line)
-    if save:
-        before = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
-        found = topicstore.save_day(conn, day, found, settings)
-        total = conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
-        print(f"주제 {len(found)}개를 저장했습니다 (새 번호 {max(total - before, 0)}개 · 이어받은 번호 {len(found) - max(total - before, 0)}개 · 전체 {total}개)")
+        _say_topic_step({"ok": True, "note": "", "review_notes": notes, "usage": usage, "score": None}, print)
     merged = [t for t in found if len(t["items"]) > 1]
     cross = [t for t in merged if len(t["platforms"]) > 1]
     print(f"[{day}] 항목 {len(entries)}개 → 주제 {len(found)}개 · 2건 이상 묶인 주제 {len(merged)}개 · 여러 플랫폼에 걸친 주제 {len(cross)}개")
     for t in (cross + [t for t in merged if t not in cross])[:top]:
-        if t["named_by_llm"] or t.get("code"):
-            print(f"\n■ {t.get('code', '')} {t['name']}".replace("■  ", "■ "), end="")
+        if t["named_by_llm"]:
+            print(f"\n■ {t['name']}", end="")
         print(f"\n● 플랫폼 {'·'.join(t['platforms'])} · 출처 {t['origins']}곳 · 항목 {len(t['items'])}건 · 어텐션 합 {t['attention']:.1f}")
         for e in t["items"][:6]:
             print(f"    [{settings['sources'][e['source']]['label']}] {e['title'][:70]}")
         if len(t["items"]) > 6:
             print(f"    … 외 {len(t['items']) - 6}건")
     return 0
+
+
+def _say_topic_step(result: dict, say) -> None:
+    """주제 단계의 결과를 몇 줄로 알린다(매일 실행 기록과 topics 명령이 같이 쓴다)."""
+    if not result["ok"]:
+        say(f"  주제: {result['note']}")
+        return
+    usage = result.get("usage")
+    if usage:
+        say(f"  주제 검토: LLM 1회 (입력 {usage['input_tokens']:,} · 출력 {usage['output_tokens']:,} 토큰)")
+    for line in result.get("review_notes", []):
+        say("    " + line)
+    s = result.get("score")
+    if s:
+        mode = (f"지금 인기 모드(기준선 {s['days']}/{s['need']}일)" if s["mode"] == "early"
+                else f"점수 모드 · 임계 통과 {s['passed']}개")
+        say(f"  주제: {s['total']}개 · 순위에 든 주제 {s['ranked']}개 · {mode}")
+
+
+def _print_ranked_topics(conn, day: str, settings: dict, top: int) -> None:
+    rows = conn.execute(
+        "SELECT s.*, t.name, t.field, t.first_seen, d.attention, d.platforms, d.item_count FROM topic_score s "
+        "JOIN topics t ON t.code = s.topic_code JOIN topic_daily d ON d.topic_code = s.topic_code AND d.date = s.date "
+        "WHERE s.date = ? AND s.rank IS NOT NULL ORDER BY s.rank LIMIT ?",
+        (day, top),
+    ).fetchall()
+    for r in rows:
+        parts = [f"어텐션 {r['attention']:.1f}"]
+        if r["score"] is not None:
+            parts = [f"점수 {r['score']:.1f}", f"z {r['z']:.1f}", f"가속 {r['accel']:.2f}"] + parts
+        plats = "·".join(sorted(json.loads(r["platforms"])))
+        print(f"{r['rank']:>3}. {r['topic_code']} {r['name'][:50]}")
+        print(f"      {r['field']} · 플랫폼 {plats} · 출처 {r['origins']}곳 · 항목 {r['item_count']}건 · {' · '.join(parts)}"
+              + (" · 임계 통과" if r["passed"] else ""))
 
 
 def _rank(settings: dict, top: int, day: str | None) -> int:

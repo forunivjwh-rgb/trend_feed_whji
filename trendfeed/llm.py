@@ -119,6 +119,9 @@ def _ask(client, cfg: dict, system: str, user: str, schema: dict) -> tuple[dict 
         return None, usage
 
 
+ask = _ask  # 다른 단계(why.py)에서 같은 방식으로 묻는다
+
+
 def summarize(client, cfg: dict, title: str, material: str) -> tuple[dict | None, dict]:
     """자료를 읽고 요약 한 건을 만든다. (요약 또는 None, 사용량)을 돌려준다."""
     return _ask(client, cfg, SUMMARY_SYSTEM, f"제목: {title}\n\n<자료>\n{material}\n</자료>", SUMMARY_SCHEMA)

@@ -1,10 +1,9 @@
 """실탐(깊게 읽기) — "그게 뭔데?"에 답하는 단계 (명세 6번).
 
-위에 오른 항목의 원문을 읽고 LLM으로 요약한다. 숫자와 순위는 이미 코드가 계산했다.
+순위가 높은 주제마다 대표 글 하나의 원문을 읽고 LLM으로 요약한다. 숫자와 순위는 이미 코드가 계산했다.
+점수 모드에서는 임계를 넘은 주제를 먼저 읽는다.
 
-지금은 임시 방식이다:
-- 주제 묶기와 "평소 대비" 점수가 아직 없어, "지금 인기" 위에서 몇 건을 대상으로 한다.
-- 읽는 도구는 명세의 Agent Reach 대신 각 소스의 공개 주소에서 직접 읽는다.
+임시인 곳: 읽는 도구는 명세의 Agent Reach 대신 각 소스의 공개 주소에서 직접 읽는다.
 읽은 원문은 요약에만 쓰고 저장하지 않는다. 남는 것은 요약과 "어디까지 읽었나"뿐이다.
 """
 
@@ -114,13 +113,12 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print) -> dict:
 
     since = (date.fromisoformat(day) - timedelta(days=cfg["no_reread_days"])).isoformat()
     recent = {r[0] for r in conn.execute("SELECT item_id FROM deepreads WHERE date > ?", (since,))}
+    recent_topics = {r[0] for r in conn.execute(
+        "SELECT DISTINCT m.topic_code FROM deepreads d JOIN topic_items m ON m.item_id = d.item_id "
+        "WHERE d.date > ? AND m.date = ?", (since, day))}
     deadline = time.monotonic() + cfg["budget_minutes"] * 60
-    for e in rank.now_popular(conn, day, settings)[: cfg["top_n"]]:
-        module_name = sources[e["source"]].get("module", e["source"])
-        reader = READERS.get(module_name)
-        if e["item_id"] in recent or reader is None:
-            result["skipped"] += 1  # 7일 안에 이미 읽었거나, 아직 읽는 법이 없는 소스
-            continue
+    for e in _targets(conn, day, settings, recent, recent_topics, result):
+        reader = READERS[sources[e["source"]].get("module", e["source"])]
         if time.monotonic() > deadline:
             result["note"] = f"시간 예산 {cfg['budget_minutes']}분을 다 써서 멈춤"
             break
@@ -151,3 +149,39 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print) -> dict:
     say(f"  실탐: 요약 {result['read']}건 · 건너뜀 {result['skipped']}건 · 실패 {result['failed']}건"
         + (f" — {result['note']}" if result["note"] else ""))
     return result
+
+
+def _targets(conn, day: str, settings: dict, recent: set, recent_topics: set, result: dict) -> list[dict]:
+    """읽을 글: 순위가 높은 주제부터(점수 모드에서는 임계 통과 주제 먼저) 주제마다 대표 글 하나.
+
+    대표 글은 그 주제에서 읽는 법이 있는 소스의 글 중 어텐션이 가장 큰 것이다. 같은 주제를 7일 안에
+    이미 읽었으면 건너뛴다(명세 6번 재탐색 금지). 주제 단계가 돌지 않은 날은 글 순위를 그대로 쓴다.
+    """
+    cfg, sources = settings["deepread"], settings["sources"]
+    entries = {e["item_id"]: e for e in rank.now_popular(conn, day, settings)}
+    readable = {k for k, v in sources.items() if v.get("module", k) in READERS}
+    rows = conn.execute(
+        "SELECT topic_code, passed FROM topic_score WHERE date = ? AND rank IS NOT NULL ORDER BY passed DESC, rank",
+        (day,),
+    ).fetchall()
+    if not rows:  # 주제가 없으면 글 하나를 주제 하나처럼 본다
+        groups = [("", [e]) for e in sorted(entries.values(), key=lambda e: e["place"])]
+    else:
+        members: dict[str, list[dict]] = {}
+        for item_id, code in conn.execute("SELECT item_id, topic_code FROM topic_items WHERE date = ?", (day,)):
+            if item_id in entries:
+                members.setdefault(code, []).append(entries[item_id])
+        groups = [(r["topic_code"], members.get(r["topic_code"], [])) for r in rows]
+    picked, considered = [], 0
+    for code, items in groups:
+        if considered >= cfg["top_n"]:
+            break  # 위 top_n 개 주제만 본다(하루 여러 번 돌아도 새로 오른 주제만 더 읽는다)
+        candidates = sorted((e for e in items if e["source"] in readable), key=lambda e: -e["attention"])
+        if not candidates:
+            continue  # 읽는 법이 있는 소스의 글이 없는 주제(유튜브만 있는 주제 등)는 세지 않는다
+        considered += 1
+        if (code and code in recent_topics) or any(e["item_id"] in recent for e in items):
+            result["skipped"] += 1  # 7일 안에 이미 읽은 주제
+            continue
+        picked.append(candidates[0])
+    return picked
