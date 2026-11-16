@@ -18,7 +18,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from . import archive, config, db, deepread, feed, rank, schedule
+from . import archive, config, db, deepread, feed, rank, schedule, topics
 from .fetch import Fetcher
 from .run import STATUS_LABEL, collect_all
 
@@ -39,6 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("rank", help='"지금 인기" 순위를 글자로 본다')
     p.add_argument("--top", type=int, default=10, help="보여 줄 항목 수")
     p.add_argument("--date", help="이 날짜 기준 (기본: 오늘)")
+
+    p = sub.add_parser("topics", help="비슷한 항목을 묶은 주제 후보를 글자로 본다")
+    p.add_argument("--top", type=int, default=15, help="보여 줄 주제 수")
+    p.add_argument("--date", help="이 날짜 기준 (기본: 가장 최근에 모은 날)")
 
     p = sub.add_parser("feed", help="피드 페이지를 만든다")
     p.add_argument("--open", action="store_true", dest="open_page", help="만든 뒤 브라우저로 연다")
@@ -70,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         return _status(settings, args.top)
     if args.command == "rank":
         return _rank(settings, args.top, args.date)
+    if args.command == "topics":
+        return _topics(settings, args.top, args.date)
     if args.command == "feed":
         return _feed(settings, args.date, args.open_page)
     if args.command == "import":
@@ -201,6 +207,31 @@ def _feed(settings: dict, day: str | None, open_page: bool, say=print) -> int:
     say(f"[{day}] 피드 페이지: {path}")
     if open_page:
         webbrowser.open(path.as_uri())
+    return 0
+
+
+def _topics(settings: dict, top: int, day: str | None) -> int:
+    conn = db.connect(config.db_path(settings))
+    day = day or conn.execute("SELECT MAX(date) FROM item_snapshots").fetchone()[0]
+    if day is None:
+        print("아직 저장된 것이 없습니다.")
+        return 0
+    entries = rank.now_popular(conn, day, settings)
+    try:
+        vectors = topics.embed([topics.text_of(e) for e in entries], settings["topics"])
+    except topics.Unavailable as e:
+        print(f"{e} — `pip install fastembed` 뒤에 다시 돌려 주세요.")
+        return 1
+    found = topics.cluster(entries, vectors, settings)
+    merged = [t for t in found if len(t["items"]) > 1]
+    cross = [t for t in merged if len(t["platforms"]) > 1]
+    print(f"[{day}] 항목 {len(entries)}개 → 주제 {len(found)}개 · 2건 이상 묶인 주제 {len(merged)}개 · 여러 플랫폼에 걸친 주제 {len(cross)}개")
+    for t in (cross + [t for t in merged if t not in cross])[:top]:
+        print(f"\n● 플랫폼 {'·'.join(t['platforms'])} · 출처 {t['origins']}곳 · 항목 {len(t['items'])}건 · 어텐션 합 {t['attention']:.1f}")
+        for e in t["items"][:6]:
+            print(f"    [{settings['sources'][e['source']]['label']}] {e['title'][:70]}")
+        if len(t["items"]) > 6:
+            print(f"    … 외 {len(t['items']) - 6}건")
     return 0
 
 

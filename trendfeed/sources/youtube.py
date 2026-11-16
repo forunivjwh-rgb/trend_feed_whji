@@ -162,6 +162,7 @@ def _add_comment_phrases(cfg: dict, fetch, key: str, records: list[Record]) -> l
         found = phrases.repeated(
             texts, max_words=cfg["phrase_max_words"], min_comments=cfg["phrase_min_comments"],
             top=cfg["phrase_top"], min_chars=cfg["phrase_min_chars"],
+            ignore_chars=cfg["phrase_ignore_chars"],
         )
         if found:
             rec.snap_extra["comment_phrases"] = found

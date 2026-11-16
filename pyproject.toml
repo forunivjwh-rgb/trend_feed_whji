@@ -7,3 +7,7 @@ dependencies = [
     "anthropic>=2,<3",                  # LLM(Claude API) 호출. 키가 없으면 쓰이지 않는다
     "tzdata; sys_platform == 'win32'",  # 윈도우에는 시간대 정보가 들어 있지 않아 따로 받는다
 ]
+
+[project.optional-dependencies]
+# 주제 묶기에만 쓴다. 아직 매일 실행에는 넣지 않았다.
+topics = ["fastembed>=0.9,<1"]
