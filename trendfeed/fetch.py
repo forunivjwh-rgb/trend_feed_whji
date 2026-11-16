@@ -36,3 +36,13 @@ class Fetcher:
 
     def get_json(self, url: str, headers: dict | None = None):
         return json.loads(self.get_text(url, headers))
+
+    def send_json(self, method: str, url: str, data: dict, headers: dict | None = None):
+        """JSON 을 보내고 답을 받는다(다시 시도하지 않는다). GitHub 이슈 닫기에 쓴다."""
+        req = urllib.request.Request(
+            url, data=json.dumps(data).encode("utf-8"), method=method,
+            headers={"User-Agent": self.user_agent, "Content-Type": "application/json", **(headers or {})},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+        return json.loads(body) if body else None

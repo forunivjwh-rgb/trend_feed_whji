@@ -27,11 +27,13 @@ def _runs(comment: str, noise: set[str]) -> list[list[str]]:
 
 
 def repeated(
-    comments: list[str], *, max_words: int, min_comments: int, top: int, min_chars: int, ignore_chars: str = ""
+    comments: list[str], *, max_words: int, min_comments: int, top: int, min_chars: int, ignore_chars: str = "",
+    stopwords: frozenset | set = frozenset(),
 ) -> list[dict]:
     """[{"text": 반복된 말, "count": 그 말이 나온 댓글 수}, ...] 를 많이 나온 순으로.
 
     ignore_chars 의 글자만으로 된 단어(예: "ㅋㅎㅠ" → ㅋㅋㅋ, ㅎㅎ, ㅠㅠ, ㅋㅎㅋㅎ)는 세지 않는다.
+    stopwords(뜻 없는 기본 낱말)로 시작하거나 끝나는 말도 세지 않는다. 가운데에 든 것은 괜찮다("bite of love").
     """
     noise = set(ignore_chars)
     counts: Counter[tuple[str, ...]] = Counter()
@@ -41,6 +43,8 @@ def repeated(
             for n in range(1, max_words + 1):
                 for i in range(len(words) - n + 1):
                     gram = tuple(words[i : i + n])
+                    if gram[0] in stopwords or gram[-1] in stopwords:
+                        continue  # 기본 낱말로 시작하거나 끝나는 말은 세지 않는다("the", "and that" 등)
                     if sum(len(w) for w in gram) >= min_chars:
                         seen.add(gram)
         counts.update(seen)

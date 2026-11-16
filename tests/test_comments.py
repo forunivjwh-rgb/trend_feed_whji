@@ -11,7 +11,8 @@ from tests.test_youtube import KEY, api_error, video, with_key
 OPTS = dict(max_words=3, min_comments=3, top=5, min_chars=3)
 CFG = {"enabled": True, "api_base": "https://example.invalid/youtube/v3", "regions": ["KR"], "limit": 3,
        "comments_per_video": 20, "comment_workers": 2, "phrase_min_comments": 3, "phrase_max_words": 3,
-       "phrase_min_chars": 3, "phrase_top": 5, "phrase_ignore_chars": "ㅋㅎㅠ"}
+       "phrase_min_chars": 3, "phrase_top": 5, "phrase_ignore_chars": "ㅋㅎㅠ",
+       "phrase_stopwords": ["the", "and", "that", "like", "진짜"]}
 SECRET_WORDS = "아무도모르는비밀원문"
 
 
@@ -61,6 +62,27 @@ class LaughterTest(unittest.TestCase):
     def test_empty_setting_keeps_the_old_behaviour(self):
         comments = ["ㅋㅋㅋ", "ㅋㅋㅋ 아", "오 ㅋㅋㅋ"]
         self.assertEqual(phrases.repeated(comments, **{**self.OPTS, "ignore_chars": ""}), [{"text": "ㅋㅋㅋ", "count": 3}])
+
+
+class StopwordTest(unittest.TestCase):
+    """뜻 없는 기본 낱말로 시작하거나 끝나는 말은 빼되, 가운데에 든 말은 남긴다."""
+
+    def test_real_case_from_the_first_run(self):
+        # 실제로 잡힌 것: the (13) · txt (13) · and (8) · like (6) · that (6)
+        comments = ["I like the song and that TXT", "the TXT comeback and that", "like the TXT", "and that is TXT"]
+        found = phrases.repeated(comments, max_words=3, min_comments=3, top=5, min_chars=3,
+                                 stopwords={"the", "and", "that", "like", "is", "i"})
+        self.assertEqual(found, [{"text": "txt", "count": 4}])
+
+    def test_stopword_in_the_middle_is_kept(self):
+        comments = ["bite of love 최고", "bite of love", "와 bite of love"]
+        found = phrases.repeated(comments, max_words=3, min_comments=3, top=5, min_chars=3, stopwords={"of"})
+        self.assertEqual(found[0], {"text": "bite of love", "count": 3})
+
+    def test_shipped_list_has_common_words(self):
+        words = config.load()["sources"]["youtube"]["phrase_stopwords"]
+        for w in ("the", "and", "that", "like", "그냥", "진짜"):
+            self.assertIn(w, words)
 
 
 class Fetch:

@@ -5,7 +5,7 @@ GitHub Actions 에는 저장 파일(SQLite)을 계속 둘 곳이 없어서, 하�
 다시 만들고, 수집한 뒤 오늘 치 파일을 새로 쓴다.
 
 한 줄이 기록 하나다(JSON). kind 가 "run" 이면 소스 실행 기록, "item" 이면 항목과 그날의 숫자,
-"deepread" 이면 실탐 요약, "llm" 이면 LLM 호출 기록(토큰 수), "topic" 이면 주제와 그날 속한 항목, "why" 이면 주제별 "왜 올랐나" 문장이다.
+"deepread" 이면 실탐 요약, "llm" 이면 LLM 호출 기록(토큰 수), "topic" 이면 주제와 그날 속한 항목, "why" 이면 주제별 "왜 올랐나" 문장, "feedback" 이면 "몰랐는데 흥미로움" 표시다.
 줄 순서를 항상 같게 써서 바뀐 곳만 차이로 남게 한다.
 """
 
@@ -68,6 +68,8 @@ def export_day(conn, day: str, out_dir: Path) -> Path:
             "attention": r["attention"], "platforms": json.loads(r["platforms"]), "origins": r["origins"],
             "items": [[m["source"], m["external_id"]] for m in members],
         })
+    for r in conn.execute("SELECT * FROM feedback WHERE date = ? ORDER BY topic_code", (day,)):
+        lines.append({"kind": "feedback", "code": r["topic_code"], "interesting": r["interesting"], "issue": r["issue"]})
     for r in conn.execute("SELECT * FROM topic_why WHERE date = ? ORDER BY topic_code", (day,)):
         lines.append({"kind": "why", "code": r["topic_code"], "sentence": r["sentence"], "model": r["model"]})
     path = Path(out_dir) / DAYS_DIR / f"{day}.jsonl"
@@ -109,6 +111,9 @@ def import_all(conn, in_dir: Path, settings: dict | None = None) -> int:
                         )
                 elif line["kind"] == "topic":
                     _import_topic(conn, day, line)
+                elif line["kind"] == "feedback":
+                    conn.execute("INSERT OR REPLACE INTO feedback (topic_code, date, interesting, issue) VALUES (?, ?, ?, ?)",
+                                 (line["code"], day, line["interesting"], line["issue"]))
                 elif line["kind"] == "why":
                     conn.execute("INSERT OR REPLACE INTO topic_why (topic_code, date, sentence, model) VALUES (?, ?, ?, ?)",
                                  (line["code"], day, line["sentence"], line["model"]))

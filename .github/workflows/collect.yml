@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: write # data 브랜치에 기록을 올리려면 필요
+      issues: write   # "몰랐는데 흥미로움" 표시 이슈를 읽고 닫으려면 필요
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,8 +45,10 @@ jobs:
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }} # 실행마다 새로 나오는 이 repo 전용 토큰(이슈 읽기·닫기용)
         run: |
           : > .env
+          printf 'GITHUB_TOKEN=%s\n' "${GITHUB_TOKEN}" >> .env
           if [ -n "${YOUTUBE_API_KEY}" ]; then
             printf 'YOUTUBE_API_KEY=%s\n' "${YOUTUBE_API_KEY}" >> .env
           else
