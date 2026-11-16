@@ -17,8 +17,8 @@ from . import config, rank
 from .run import STATUS_LABEL
 
 CSS = """
-:root{color-scheme:light;--plane:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;--text-secondary:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--chip-bg:#f0efec;--band:rgba(42,120,214,.10);--s1:#2a78d6;--s2:#eb6834;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--good:#0ca30c;--warn:#fab219}
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--plane:#0d0d0d;--surface-1:#1a1a19;--text-primary:#f0efec;--text-secondary:#c3c2b7;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--chip-bg:#2c2c2a;--band:rgba(57,135,229,.18);--s1:#3987e5;--s2:#d95926;--s4:#c98500;--s5:#d55181;--s6:#0ca30c}}
+:root{color-scheme:light;--plane:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;--text-secondary:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--chip-bg:#f0efec;--band:rgba(42,120,214,.10);--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--good:#0ca30c;--warn:#fab219}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--plane:#0d0d0d;--surface-1:#1a1a19;--text-primary:#f0efec;--text-secondary:#c3c2b7;--grid:#2c2c2a;--axis:#383835;--border:rgba(255,255,255,.10);--chip-bg:#2c2c2a;--band:rgba(57,135,229,.18);--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#0ca30c}}
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;font-size:14px;line-height:1.5;background:var(--plane);color:var(--text-primary);-webkit-text-size-adjust:100%}
 h1,h2,h3,p{margin:0}
@@ -37,6 +37,7 @@ h3{font-size:20px;line-height:1.35;overflow-wrap:anywhere}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--muted)}
 .dot[data-p="HN"]{background:var(--s1)}
 .dot[data-p="GH"]{background:var(--s2)}
+.dot[data-p="YT"]{background:var(--s3)}
 .dot[data-p="HF"]{background:var(--s4)}
 .dot[data-p="GN"]{background:var(--s5)}
 .dot[data-p="WK"]{background:var(--s6)}
@@ -132,7 +133,7 @@ def _card(e: dict, sources: dict) -> str:
       </div>
       <h3>{_link(e)}</h3>
       {desc_html}
-      <div class="small">출처 {escape(e['origin'] or '알 수 없음')} · 처음 본 날 {escape(e['first_seen'])}{discuss_html}</div>
+      <div class="small">출처 {escape(e['item_extra'].get('channel_title') or e['origin'] or '알 수 없음')} · 처음 본 날 {escape(e['first_seen'])}{discuss_html}</div>
     </div>
     <div class="score"><span class="small">오늘 어텐션 · 보통의</span><b>{e['times_typical']:.1f}배</b></div>
   </div>

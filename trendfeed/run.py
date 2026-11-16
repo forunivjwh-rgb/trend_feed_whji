@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from . import db
 from .fetch import Fetcher
-from .sources import module_for
+from .sources import SourceProblem, module_for
 
 STATUS_LABEL = {"ok": "정상", "warn": "주의", "empty": "입력 없음"}
 
@@ -32,6 +32,8 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch) -> dict:
     try:
         result = module.collect(cfg, fetch)
         records, problems = result.records, list(result.problems)
+    except SourceProblem as e:  # 소스가 이유를 직접 알려 준 경우(예: 키 없음)
+        problems.append(str(e))
     except Exception as e:
         problems.append(f"수집 실패 ({_reason(e)})")
 
@@ -45,6 +47,9 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch) -> dict:
                 again = module.refetch(cfg, fetch, ids)
                 followed = again.records
                 problems += again.problems
+            except SourceProblem as e:
+                if str(e) not in problems:
+                    problems.append(str(e))
             except Exception as e:
                 problems.append(f"다시 확인 실패 ({_reason(e)})")
 

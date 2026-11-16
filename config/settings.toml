@@ -98,3 +98,16 @@ project = "en.wikipedia"
 limit = 100
 lookback_days = 3
 pause_sec = 3.0
+
+# 유튜브는 무료 API 키가 필요하다. 키는 여기가 아니라 .env 파일에 YOUTUBE_API_KEY=... 로 둔다.
+# 키가 없으면 이 소스만 건너뛰고 나머지는 그대로 돈다.
+[sources.youtube]
+enabled = true
+label = "YouTube 인기 차트"
+code = "YT"
+field = "영상·숏폼"
+weight = 1.0
+api_base = "https://www.googleapis.com/youtube/v3"
+regions = ["KR"]             # 어느 나라의 인기 차트를 볼지
+limit = 250                  # 하루에 모으는 영상 수 (명세 3번). 차트가 그보다 짧으면 있는 만큼
+follow_days = 2              # 차트에서 빠진 영상도 이 날수만큼은 숫자를 다시 적는다. 0이면 끔

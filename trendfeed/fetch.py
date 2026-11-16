@@ -19,8 +19,8 @@ class Fetcher:
         self.backoff = http_cfg["backoff_sec"]
         self.user_agent = http_cfg["user_agent"]
 
-    def get_text(self, url: str) -> str:
-        req = urllib.request.Request(url, headers={"User-Agent": self.user_agent})
+    def get_text(self, url: str, headers: dict | None = None) -> str:
+        req = urllib.request.Request(url, headers={"User-Agent": self.user_agent, **(headers or {})})
         for attempt in range(self.retries + 1):
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -34,5 +34,5 @@ class Fetcher:
             time.sleep(self.backoff * (2**attempt))
         raise AssertionError("unreachable")
 
-    def get_json(self, url: str):
-        return json.loads(self.get_text(url))
+    def get_json(self, url: str, headers: dict | None = None):
+        return json.loads(self.get_text(url, headers))
