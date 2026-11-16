@@ -37,7 +37,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/fastembed
-          key: fastembed-${{ hashFiles('config/settings.toml') }}
+          key: fastembed-paraphrase-multilingual-MiniLM-L12-v2
           restore-keys: fastembed-
 
       # 키는 repo Secrets 에서 받아 실행하는 동안만 .env 에 둔다. 이 서버는 끝나면 통째로 지워진다.

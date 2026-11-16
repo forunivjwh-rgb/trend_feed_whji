@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config, feedback, llm, rank, score
+from . import config, feedback, llm, rank, rollup, score
 from .run import STATUS_LABEL
 
 CSS = """
@@ -79,6 +79,17 @@ td{padding:10px 12px 10px 0;border-bottom:1px solid var(--grid);vertical-align:t
 .why{font-size:14px;line-height:1.6}
 .chip.ex{border:1px dashed var(--axis)}
 .meta{font-size:12px;color:var(--text-secondary)}
+.multi{display:block;width:100%;height:140px}
+.multi path{fill:none;stroke-width:2;stroke-linejoin:round}
+.key{display:inline-block;width:14px;height:2px;border-radius:1px;background:var(--muted)}
+.key[data-p="HN"],.multi .key-HN{background:var(--s1);stroke:var(--s1)}
+.key[data-p="GH"],.multi .key-GH{background:var(--s2);stroke:var(--s2)}
+.key[data-p="YT"],.multi .key-YT{background:var(--s3);stroke:var(--s3)}
+.key[data-p="HF"],.multi .key-HF{background:var(--s4);stroke:var(--s4)}
+.key[data-p="GN"],.multi .key-GN{background:var(--s5);stroke:var(--s5)}
+.key[data-p="WK"],.multi .key-WK{background:var(--s6);stroke:var(--s6)}
+ul{margin:6px 0 0;padding-left:18px}
+details summary{cursor:pointer;margin-top:8px}
 """
 
 # 작은 그림들: 샘플에서 쓰는 표시
@@ -267,6 +278,77 @@ def _row(t: dict, sources: dict, chip: str = "") -> str:
 </div>"""
 
 
+def _multi_curve(curves: dict[str, list[float]]) -> str:
+    """플랫폼별 곡선(0~100)을 한 그림에. 플랫폼마다 색이 다르다."""
+    w, h, pad = 600, 140, 6
+    paths = []
+    for p, values in curves.items():
+        if not values:
+            continue
+        xs = [pad + (w - 2 * pad) * (i / max(len(values) - 1, 1)) for i in range(len(values))]
+        ys = [h - pad - (h - 2 * pad) * (v / 100) for v in values]
+        d = " ".join(f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(zip(xs, ys)))
+        paths.append(f'<path class="key-{escape(p)}" d="{d}"/>')
+    return (f'<svg class="multi" viewBox="0 0 {w} {h}" preserveAspectRatio="none" role="img" '
+            f'aria-label="플랫폼별 어텐션 곡선">{"".join(paths)}</svg>')
+
+
+def _rollups(conn, day: str, settings: dict, top_code: str | None) -> str:
+    """롤업 구역(명세 7번). 점수 모드에서만 부른다."""
+    cfg = settings["rollup"]
+    by_code = {s["code"]: s["label"] for s in settings["sources"].values() if "code" in s}
+    d, w, m = rollup.daily(conn, day, cfg), rollup.weekly(conn, day, cfg), rollup.monthly(conn, day, top_code, cfg)
+
+    def rank_txt(r):
+        return f"{r}위" if r else "순위 밖"
+
+    def lines(rows, fmt):
+        return "".join(f"<li>{fmt(r)}</li>" for r in rows) or "<li>없음</li>"
+
+    day_html = (
+        f'<h3 style="font-size:17px">일 — 어제와 오늘</h3><div class="cols">'
+        f'<div><div class="small" style="font-weight:600">{cfg["daily_top"]}위 안에 새로 든 주제</div><ul>'
+        + lines(d["entered"], lambda r: f"{escape(r[1])} ({rank_txt(r[2])} → {r[3]}위)") + "</ul></div>"
+        f'<div><div class="small" style="font-weight:600">밖으로 나간 주제</div><ul>'
+        + lines(d["left"], lambda r: f"{escape(r[1])} ({r[2]}위 → {rank_txt(r[3])})") + "</ul></div>"
+        f'<div><div class="small" style="font-weight:600">가장 많이 오른 주제</div><ul>'
+        + lines(d["risers"], lambda r: f"{escape(r[1])} ({r[2]}위 → {r[3]}위)") + "</ul></div></div>"
+    )
+    week_html = (
+        f'<h3 style="font-size:17px">주 — 최근 7일</h3><div class="cols">'
+        f'<div><div class="small" style="font-weight:600">지속 ({cfg["weekly_top"]}위 안에 든 날)</div><ul>'
+        + lines(w["lasting"], lambda r: f"{escape(r[1])} ({r[2]}/{r[3]}일)") + "</ul></div>"
+        f'<div><div class="small" style="font-weight:600">신규 (처음 나타난 지 {cfg["new_within_days"]}일 안 · 오늘 {cfg["new_top"]}위 안)</div><ul>'
+        + lines(w["new"], lambda r: f"{escape(r[1])} ({r[2]}위)") + "</ul></div>"
+        f'<div><div class="small" style="font-weight:600">이탈 ({cfg["weekly_top"]}위 안에 들었다가 오늘은 밖)</div><ul>'
+        + lines(w["left"], lambda r: escape(r[1])) + "</ul></div></div>"
+    )
+    month_html = ""
+    if m:
+        legend = "".join(f'<span class="row small" style="gap:6px"><span class="key" data-p="{escape(p)}"></span>'
+                         f'{escape(by_code.get(p, p))}</span>' for p in m["curves"])
+        lag = " → ".join(f"{escape(by_code.get(p, p))} {first[5:]}" + (f" (+{gap}일)" if gap else "")
+                         for p, first, gap in m["lags"])
+        head = "<tr><th>날짜</th>" + "".join(f"<th>{escape(by_code.get(p, p))}</th>" for p in m["curves"]) + "</tr>"
+        body = "".join(
+            f"<tr><td>{escape(dd)}</td>" + "".join(f"<td>{m['curves'][p][i]:.0f}</td>" for p in m["curves"]) + "</tr>"
+            for i, dd in enumerate(m["days"]))
+        month_html = (
+            f'<h3 style="font-size:17px">월 — {escape(m["name"])} ({escape(m["code"])})</h3>'
+            f'<p class="sub">플랫폼별 최근 {len(m["days"])}일 어텐션(각 플랫폼 최대치 = 100). '
+            f'각 플랫폼이 자기 최대치의 {int(cfg["lag_ratio"] * 100)}%를 처음 넘은 날: {lag}</p>'
+            f'<div class="row">{legend}</div>{_multi_curve(m["curves"])}'
+            f'<details><summary class="small">{len(m["days"])}일 값 표 펼치기</summary>'
+            f'<div class="scroll"><table>{head}{body}</table></div></details>'
+        )
+    return f"""
+  <section>
+    <div><h2>롤업</h2>
+    <p class="sub">일·주·월 요약이에요. 순위는 날마다 같은 점수식으로 계산한 것이에요.</p></div>
+    <div class="card">{day_html}{week_html}{month_html}</div>
+  </section>"""
+
+
 def _llm_stat(conn, day: str) -> str:
     """맨 위 요약 칸: 오늘 실탐 몇 건, LLM을 몇 번 불렀고 토큰을 얼마나 썼나."""
     reads = conn.execute("SELECT COUNT(*) FROM deepreads WHERE date = ?", (day,)).fetchone()[0]
@@ -410,6 +492,8 @@ def build(conn, day: str, settings: dict) -> str:
                    f"+ 가속 + 플랫폼 폭. 임계 {settings['score']['threshold']} 이상이면 '임계 통과'예요.")
         top_title = f"교차 플랫폼 Top {cfg['top_n']}"
 
+    first = conn.execute("SELECT topic_code FROM topic_score WHERE date = ? AND rank = 1", (day,)).fetchone()
+    rollups = _rollups(conn, day, settings, first[0] if first else None) if mode == "score" else ""
     return f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -441,6 +525,8 @@ def build(conn, day: str, settings: dict) -> str:
     <p class="sub">위 Top 5에 나오지 않은 주제 중 분야마다 {cfg['per_field_n']}개예요. "실탐"은 원문을 읽고 요약한 주제, "메타만"은 수치만 본 주제예요.</p></div>
     {"".join(field_html)}
   </section>
+
+  {rollups}
 
   <section>
     <div><h2>탐색 슬롯</h2>
