@@ -247,3 +247,6 @@ Thumbs.db
 
 # 브라우저로 저장한 실제 페이지 (로그인 정보가 들어 있을 수 있어 올리지 않는다)
 tests/fixtures/real/
+
+# Agent Reach 설치 폴더(실탐 도구)
+.agent-reach/

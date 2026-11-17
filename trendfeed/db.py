@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS topic_score (
 _ADDED_COLUMNS = [
     ("topics", "keywords", "TEXT NOT NULL DEFAULT '[]'"),
     ("topic_score", "explore", "INTEGER NOT NULL DEFAULT 0"),
+    ("daily_runs", "deepread_tool", "TEXT NOT NULL DEFAULT ''"),  # 그날 실탐에 쓴 도구와 막힌 곳 한 줄
 ]
 
 
@@ -286,6 +287,12 @@ def save_run(
 def start_daily(conn, day: str, started_at: str) -> None:
     conn.execute("INSERT OR REPLACE INTO daily_runs (date, started_at, finished_at) VALUES (?, ?, NULL)",
                  (day, started_at))
+    conn.commit()
+
+
+def save_deepread_tool(conn, day: str, text: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO daily_runs (date, started_at) VALUES (?, ?)", (day, ""))
+    conn.execute("UPDATE daily_runs SET deepread_tool = ? WHERE date = ?", (text, day))
     conn.commit()
 
 

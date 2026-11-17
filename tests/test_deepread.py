@@ -12,6 +12,7 @@ from trendfeed.sources import Record
 SETTINGS = config.load()
 SETTINGS["deepread"]["pause_sec"] = 0  # 시험에서는 쉬지 않는다
 SETTINGS["deepread"]["read_explore"] = False  # 탐색 슬롯 읽기는 따로 시험한다
+SETTINGS["agent_reach"]["enabled"] = False  # 진짜 도구는 부르지 않는다(Agent Reach 시험은 test_agentreach)
 DAY = "2026-11-17"
 T = f"{DAY}T19:00:00+00:00"
 RAW = "아주긴원문표시 " * 60  # 요약에만 쓰이고 어디에도 저장되면 안 되는 원문

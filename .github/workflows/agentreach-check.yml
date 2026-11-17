@@ -1,0 +1,26 @@
+# Agent Reach 점검: 설정에 고정한 포크 커밋을 이 서버에 설치하고, 공개 채널(유튜브 자막·GitHub)이
+# 실제로 되는지 한 번씩 불러 본다. 저장·기록은 하지 않는다. Actions 화면에서 "Run workflow" 로 돌린다.
+name: Agent Reach 점검
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 설치하고 공개 채널 불러 보기
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # 이 점검에는 repo 토큰이 필요 없다
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 설치 (고정 커밋)
+        run: python -m trendfeed agent-reach install
+      - name: 점검 (키 없이)
+        run: python -m trendfeed agent-reach check
