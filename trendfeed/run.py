@@ -28,8 +28,8 @@ def collect_all(settings: dict, conn, day: str, only: str | None = None, fetch=N
 
 def _usual_count(conn, day: str, source: str, status_cfg: dict | None) -> float | None:
     """이 소스가 평소 하루에 모은 건수(지난 며칠의 중앙값). 기록이 모자라면 None."""
-    if not status_cfg:
-        return None
+    if not status_cfg or not status_cfg["drop_ratio"]:
+        return None  # 기준을 정하지 않았으면(0) 판단하지 않는다
     counts = [r[0] for r in conn.execute(
         "SELECT item_count FROM source_runs WHERE source = ? AND date < ? AND status != 'empty' ORDER BY date DESC LIMIT ?",
         (source, day, status_cfg["lookback_days"]),

@@ -16,13 +16,18 @@ def hn(ext_id, title, score, url="https://example.com/a"):
                   item_extra={"discuss_url": f"https://news.ycombinator.com/item?id={ext_id}"})
 
 
-def make_topics(conn, day, settings):
-    """주제 단계를 돌린다. 묶기 도구 없이(글 하나 = 주제 하나), LLM 검토 없이."""
+def make_topics(conn, day, settings, min_origins=1):
+    """주제 단계를 돌린다. 묶기 도구 없이(글 하나 = 주제 하나), LLM 검토 없이.
+
+    글 하나짜리 주제는 출처가 1곳이라 명세의 "출처 3곳" 조건으로는 순위에 하나도 오르지 않는다.
+    출처 조건과 상관없는 것을 보는 시험이 많아, 기본으로 그 조건을 1곳으로 낮춰 돌린다.
+    """
     def no_tool(*args, **kwargs):
         raise topics.Unavailable("시험에서는 묶기 도구를 쓰지 않음")
 
+    loose = {**settings, "score": {**settings["score"], "min_origins": min_origins}}
     with mock.patch.object(topics, "embed", no_tool):
-        return topicrun.run(conn, day, settings, review=False)
+        return topicrun.run(conn, day, loose, review=False)
 
 
 class FeedTest(unittest.TestCase):
@@ -60,6 +65,16 @@ class FeedTest(unittest.TestCase):
         self.assertIn("하루 +900점", top)  # 근거 글의 숫자
         self.assertIn("T-0001", top)
         self.assertIn("대표", top)
+
+    def test_spec_origin_rule_keeps_single_source_topics_out_even_in_now_popular_mode(self):
+        # 명세 3번: 같은 주제가 출처 3곳 미만이면 순위에 올리지 않는다("지금 인기" 모드도 같다)
+        step = make_topics(self.conn, "2026-11-17", self.settings, min_origins=3)
+        self.assertEqual((step["score"]["mode"], step["score"]["ranked"]), ("early", 0))
+        html = feed.build(self.conn, "2026-11-17", self.settings)
+        cards = html.split('<article class="card">')[1:]
+        self.assertEqual(len(cards), 1)                 # 순위 카드는 없고 탐색 카드 1장만
+        self.assertIn("무작위 추첨으로 올라왔어요", cards[0])
+        self.assertNotIn("지금 인기</span>", cards[0])
 
     def test_fallback_without_the_grouping_tool_still_makes_topics(self):
         self.assertTrue(self.step["ok"])

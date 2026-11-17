@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -195,9 +195,10 @@ def _label_chip(t: dict) -> str:
         return f'<span class="chip ex">{ICON_EX} 탐색</span>'
     if t["mode"] == "early":
         return f'<span class="chip line">{ICON_NOW} 지금 인기</span>'
-    if t["passed"]:
-        return f'<span class="chip line">{ICON_UP} 임계 통과</span>'
-    return '<span class="chip line">점수 순</span>'
+    # 점수 모드: 처음 나타난 지 baseline_days 안이면 "신생", 아니면 "가속" (샘플 피드와 같다)
+    if t.get("is_new"):
+        return '<span class="chip line">＋ 신생</span>' + (' <span class="chip">임계 통과</span>' if t["passed"] else "")
+    return f'<span class="chip line">{ICON_UP} 가속</span>' + (' <span class="chip">임계 통과</span>' if t["passed"] else "")
 
 
 def _mark(t: dict, settings: dict, day: str) -> str:
@@ -236,6 +237,7 @@ def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "") -> str:
         <span class="small">{escape(t['code'])}</span>
       </div>
       <h3>{escape(t['name'])}</h3>
+      <div class="row">{"".join(f'<span class="chip">{escape(k)}</span>' for k in t.get("keywords", []))}</div>
       <div class="row">{_dots(t['platforms'], by_code)}</div>
       <div class="small">출처 {t['origins']}곳 · 항목 {t['item_count']}건 · 처음 나타난 날 {escape(t['first_seen'])}</div>
       {note}
@@ -369,7 +371,7 @@ def load_topics(conn, day: str, settings: dict) -> dict[str, dict]:
     days = score.run_days(conn, day)[-settings["feed"]["curve_days"]:]
     out: dict[str, dict] = {}
     for r in conn.execute(
-        "SELECT s.*, t.name, t.field, t.first_seen, d.attention, d.platforms, d.item_count FROM topic_score s "
+        "SELECT s.*, t.name, t.field, t.first_seen, t.keywords, d.attention, d.platforms, d.item_count FROM topic_score s "
         "JOIN topics t ON t.code = s.topic_code JOIN topic_daily d ON d.topic_code = s.topic_code AND d.date = s.date "
         "WHERE s.date = ?", (day,)
     ):
@@ -377,6 +379,8 @@ def load_topics(conn, day: str, settings: dict) -> dict[str, dict]:
         t["code"] = r["topic_code"]
         t["platforms"] = sorted(json.loads(r["platforms"]))
         t["explore"] = False
+        t["keywords"] = json.loads(r["keywords"] or "[]")
+        t["is_new"] = (date.fromisoformat(day) - date.fromisoformat(r["first_seen"])).days < settings["score"]["baseline_days"]
         t["items"] = []
         out[t["code"]] = t
     for item_id, code in conn.execute("SELECT item_id, topic_code FROM topic_items WHERE date = ?", (day,)):
@@ -430,14 +434,14 @@ def build(conn, day: str, settings: dict) -> str:
     cards = [_card(t, i, sources, cfg, _mark(t, settings, day)) for i, t in enumerate(top5, start=1)]
     liked = sum(t["interesting"] for t in top5)
 
-    # 분야별 Top 3 (Top 5에 나온 주제는 빼고)
+    # 분야별 Top 3 (명세 5번: 분야마다 3건씩 따로 보여 준다)
     fields: list[str] = []
     for src in sources.values():
         if src.get("enabled") and src["field"] not in fields:
             fields.append(src["field"])
     field_html = []
     for field in fields:
-        picks_f = [t for t in ranked if t["field"] == field and t["code"] not in shown][: cfg["per_field_n"]]
+        picks_f = [t for t in ranked if t["field"] == field][: cfg["per_field_n"]]
         body = "".join(_row(t, sources) for t in picks_f) or '<p class="sub" style="padding:10px 0">오늘 순위에 든 주제가 없어요.</p>'
         field_html.append(f'<h3 style="font-size:17px">{escape(field)}</h3><div class="card list">{body}</div>')
 
@@ -447,11 +451,16 @@ def build(conn, day: str, settings: dict) -> str:
 
     ok = sum(r["item_count"] > 0 for r in runs)
     total_items = sum(r["item_count"] for r in runs)
-    started = min((r["started_at"] for r in runs), default=None)
+    run_row = conn.execute("SELECT started_at, finished_at FROM daily_runs WHERE date = ?", (day,)).fetchone()
+    started = run_row["started_at"] if run_row else min((r["started_at"] for r in runs), default=None)
     run_line = "오늘 실행 기록이 없어요."
     if started:
-        local = datetime.fromisoformat(started).astimezone(tz)
-        run_line = f"{local:%H:%M} 시작 · {day}"
+        begin = datetime.fromisoformat(started).astimezone(tz)
+        run_line = f"{begin:%H:%M} 시작 · {day}"
+        if run_row and run_row["finished_at"]:
+            end = datetime.fromisoformat(run_row["finished_at"]).astimezone(tz)
+            minutes = max(1, round((end - begin).total_seconds() / 60))
+            run_line = f"{begin:%H:%M} 시작 → {end:%H:%M} 완료 · 총 {minutes}분 · {day}"
     passed = sum(1 for t in topics_today.values() if t["passed"])
     reads = sum(1 for t in topics_today.values() if t.get("deepread"))
     stats = [
@@ -480,6 +489,12 @@ def build(conn, day: str, settings: dict) -> str:
                  + f" · LLM {sum(by_purpose.values())}회(이름·병합 {by_purpose.get('topics', 0)} · 실탐 "
                  f"{by_purpose.get('deepread', 0)} · 왜 올랐나 {by_purpose.get('why', 0)}) · 토큰 입력 {tin:,} · 출력 {tout:,}"
                  f" · 모델 {settings['llm']['model']}")
+    for name, field, memo in cfg.get("empty_slots", []):
+        status_rows.append(
+            f'<tr><td><span class="row" style="gap:8px;font-weight:600"><span class="dot"></span>{escape(name)}</span></td>'
+            f'<td>{escape(field)}</td><td>—</td><td>—</td><td><span class="st empty"><i></i>빈 칸</span></td>'
+            f'<td>{escape(memo)}</td></tr>'
+        )
     pipeline = (f"수집 {total_items}건 → 주제 {len(topics_today)}개 → 순위 {len(ranked)}개"
                 + (f" → 임계 통과 {passed}개" if mode != "early" else "") + f" → 실탐 요약이 붙은 주제 {reads}개")
 
@@ -530,7 +545,7 @@ def build(conn, day: str, settings: dict) -> str:
 
   <section>
     <div><h2>분야별 Top {cfg['per_field_n']}</h2>
-    <p class="sub">위 Top 5에 나오지 않은 주제 중 분야마다 {cfg['per_field_n']}개예요. "실탐"은 원문을 읽고 요약한 주제, "메타만"은 수치만 본 주제예요.</p></div>
+    <p class="sub">분야마다 순위 위 {cfg['per_field_n']}개예요. "실탐"은 원문을 읽고 요약한 주제, "메타만"은 수치만 본 주제예요.</p></div>
     {"".join(field_html)}
   </section>
 

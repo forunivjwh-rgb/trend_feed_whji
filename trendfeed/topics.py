@@ -254,3 +254,23 @@ def review(found: list[dict], settings: dict, client=None, vectors=None) -> tupl
         return found, ["LLM이 답을 주지 않아 이름 붙이기·합치기는 건너뜀"], usage
     result, log = apply_review(found, picked, where, answer, settings, vectors)
     return result, log, usage
+
+
+_WORD = re.compile(r"[0-9A-Za-z\uac00-\ud7a3][0-9A-Za-z\uac00-\ud7a3.+#-]*")
+
+
+def keywords_of(items: list[dict], n: int, stopwords: set[str]) -> list[str]:
+    """주제의 키워드: 글 제목들에 여러 번 나온 낱말 순, 모자라면 대표 글 제목의 낱말로 채운다(코드가 뽑음)."""
+    counts: dict[str, int] = {}
+    first_seen: dict[str, int] = {}
+    for e in sorted(items, key=lambda e: -e["attention"]):
+        words = []
+        for w in _WORD.findall(re.sub(r"[/_]", " ", e["title"])):
+            w = w.strip(".-").lower()
+            if len(w) >= 2 and w not in stopwords and not w.isdigit() and w not in words:
+                words.append(w)
+        for w in words:
+            counts[w] = counts.get(w, 0) + 1
+            first_seen.setdefault(w, len(first_seen))
+    ranked = sorted(counts, key=lambda w: (-counts[w], first_seen[w]))
+    return ranked[:n]
