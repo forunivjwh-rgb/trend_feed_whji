@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--print", action="store_true", dest="print_only", help="등록하지 않고 내용만 본다")
     p.add_argument("--os", choices=["windows", "mac"], help="--print 와 함께: 어느 쪽 내용을 볼지")
     sub.add_parser("uninstall-schedule", help="매일 자동 실행을 해제한다")
+    p = sub.add_parser("agent-reach", help="실탐 도구 Agent Reach 를 설치하거나 점검한다")
+    p.add_argument("action", choices=["install", "check"], help="install: 설정의 고정 커밋으로 설치 · check: 공개 채널 점검")
 
     args = parser.parse_args(argv)
     settings = config.load(args.config)
@@ -81,6 +83,11 @@ def main(argv: list[str] | None = None) -> int:
         conn = db.connect(config.db_path(settings))
         print(f"기록 파일 {archive.import_all(conn, args.dir, settings)}일 치를 읽어 저장 파일을 되살렸습니다.")
         return 0
+    if args.command == "agent-reach":
+        from . import agentreach
+
+        cfg = settings["agent_reach"]
+        return agentreach.install(cfg) if args.action == "install" else agentreach.check(cfg)
     if args.command == "install-schedule":
         return _install_schedule(settings, args.print_only, args.os)
     if args.command == "uninstall-schedule":

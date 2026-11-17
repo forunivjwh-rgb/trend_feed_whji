@@ -33,6 +33,12 @@ jobs:
       - name: 도구 설치 (LLM, 주제 묶기)
         run: pip install --quiet "anthropic>=2,<3" "fastembed>=0.9,<1"
 
+      # 실탐 도구. 설정 파일 [agent_reach] 의 포크·커밋으로 고정해 따로 된 폴더에 설치한다(키를 넣기 전에).
+      # 설치가 안 돼도 실탐은 공개 주소에서 직접 읽는 방식으로 돈다.
+      - name: 실탐 도구 설치 (Agent Reach)
+        continue-on-error: true
+        run: python -m trendfeed agent-reach install
+
       # 주제 묶기 모델 파일(수백 MB)을 실행마다 받지 않도록 보관해 둔다
       - name: 주제 묶기 모델 보관함
         uses: actions/cache@v4

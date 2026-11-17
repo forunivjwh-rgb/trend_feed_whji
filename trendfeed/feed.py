@@ -448,7 +448,7 @@ def build(conn, day: str, settings: dict) -> str:
     explore_total = sum(explore_by_source.values())
     total_items = sum(r["item_count"] for r in runs)
     run_row = conn.execute("SELECT started_at, finished_at FROM daily_runs WHERE date = ?", (day,)).fetchone()
-    started = run_row["started_at"] if run_row else min((r["started_at"] for r in runs), default=None)
+    started = run_row["started_at"] if run_row and run_row["started_at"] else min((r["started_at"] for r in runs), default=None)
     run_line = "오늘 실행 기록이 없어요."
     if started:
         begin = datetime.fromisoformat(started).astimezone(tz)
@@ -486,6 +486,9 @@ def build(conn, day: str, settings: dict) -> str:
                  + f" · LLM {sum(by_purpose.values())}회(이름·병합 {by_purpose.get('topics', 0)} · 실탐 "
                  f"{by_purpose.get('deepread', 0)} · 왜 올랐나 {by_purpose.get('why', 0)}) · 토큰 입력 {tin:,} · 출력 {tout:,}"
                  f" · 모델 {settings['llm']['model']}")
+    tool = conn.execute("SELECT deepread_tool FROM daily_runs WHERE date = ?", (day,)).fetchone()
+    if tool and tool[0]:
+        run_facts += f" · 실탐 도구: {tool[0]}"
     for name, field, memo in cfg.get("empty_slots", []):
         status_rows.append(
             f'<tr><td><span class="row" style="gap:8px;font-weight:600"><span class="dot"></span>{escape(name)}</span></td>'

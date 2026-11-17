@@ -3,7 +3,9 @@
 메타데이터로 순위를 매긴 뒤(코드), 어텐션이 높은 주제만 원문을 읽고 LLM으로 요약한다.
 주제마다 대표·발단·최다 논의 1~3건을 읽고 LLM은 주제당 1번. 시간이 남으면 탐색 슬롯을 읽는다.
 
-읽는 도구: 지금은 각 소스의 공개 주소에서 직접 읽는다. Agent Reach는 다음 단계에서 붙인다.
+읽는 도구: Agent Reach(사용자 포크의 고정 커밋)로 유튜브 자막과 GitHub README·이슈를 읽는다.
+Agent Reach가 없거나 그날 막히면, 그리고 그 밖의 소스는 각 소스의 공개 주소에서 직접 읽는다.
+읽은 범위에는 Agent Reach로 읽은 부분을 "(Agent Reach)"로 표시한다.
 읽은 원문은 요약에만 쓰고 저장하지 않는다. 남는 것은 요약과 "어디까지 읽었나"뿐이다.
 """
 
@@ -16,7 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from html import unescape
 from urllib.parse import quote, urlencode
 
-from . import db, llm, rank
+from . import agentreach, db, llm, rank
 
 _TAG = re.compile(r"<[^>]+>")
 _DROP = re.compile(r"<(script|style|noscript|svg|head)\b.*?</\1>", re.S | re.I)
@@ -33,7 +35,7 @@ def _clip(text: str, limit: int) -> tuple[str, bool]:
 
 # ---------- 소스별로 읽는 법. (읽은 글자, 읽은 범위 설명)을 돌려준다. 못 읽으면 예외. ----------
 
-def _read_hackernews(e: dict, cfg: dict, sources: dict, fetch) -> tuple[str, str]:
+def _read_hackernews(e: dict, cfg: dict, sources: dict, fetch, reach=None) -> tuple[str, str]:
     parts, scope = [], []
     if e["url"] != e["item_extra"].get("discuss_url"):
         try:
@@ -70,15 +72,73 @@ def _read_readme(url: str, label: str, cfg: dict, fetch) -> tuple[str, str]:
     return body, f"{label} {'앞 ' if cut else ''}{len(body):,}자"
 
 
-def _read_github(e, cfg, sources, fetch):
-    return _read_readme(f"https://raw.githubusercontent.com/{e['external_id']}/HEAD/README.md", "README", cfg, fetch)
+_AR = "(Agent Reach)"
+_REACH_MISS = (agentreach.Stopped, agentreach.Failed, agentreach.Unavailable)
 
 
-def _read_huggingface(e, cfg, sources, fetch):
+def _reach_text(reach, channel: str, *args: str) -> str | None:
+    """Agent Reach로 읽은 글자. 못 쓰거나 못 읽으면 None(직접 읽기로 넘어간다)."""
+    if reach is None or not reach.allowed(channel):
+        return None
+    try:
+        items = reach.call(channel, *args)
+    except _REACH_MISS:
+        return None
+    return "\n\n".join(i.get("text") or "" for i in items) or None
+
+
+def _read_github(e, cfg, sources, fetch, reach=None):
+    """README와 댓글이 가장 많은 열린 이슈(명세 6번 "README, 이슈")."""
+    repo = e["external_id"]
+    parts, scope = [], []
+    readme = _reach_text(reach, "github", "read", repo, "--backend", "github-api")
+    tool = _AR if readme is not None else ""
+    if readme is None:
+        try:
+            readme = fetch.get_text(f"https://raw.githubusercontent.com/{repo}/HEAD/README.md")
+        except Exception:
+            readme = ""
+    body, cut = _clip(readme, cfg["max_chars"])
+    if body:
+        parts.append(f"[README]\n{body}")
+        scope.append(f"README {'앞 ' if cut else ''}{len(body):,}자{tool}")
+    issues = _top_issues(repo, cfg, fetch) if cfg.get("github_issues") else []
+    texts, comments = [], 0
+    for issue in issues:
+        text = _reach_text(reach, "github", "read", issue["html_url"], "--backend", "github-api")
+        tool = _AR if text is not None else ""
+        text = text if text is not None else (issue.get("body") or "")
+        texts.append(f"#{issue['number']} {issue['title']}\n{text}")
+        comments += issue.get("comments") or 0
+    if texts:
+        joined, _ = _clip("\n\n".join(texts), cfg["max_chars"])
+        parts.append(f"[이슈]\n{joined}")
+        scope.append(f"이슈 {len(texts)}(댓글 {comments}){tool}")
+    return "\n\n".join(parts), " · ".join(scope)
+
+
+def _top_issues(repo: str, cfg: dict, fetch) -> list[dict]:
+    """댓글이 가장 많은 열린 이슈(풀 리퀘스트 제외). 목록은 GitHub 공개 API에서 직접 받는다."""
+    from urllib.parse import urlencode as _q
+
+    from . import config
+
+    token = config.secret("GITHUB_TOKEN")  # Actions 가 주는 읽기용 토큰. 있으면 횟수 제한이 넉넉해진다. 도구에는 넘기지 않는다
+    headers = {"Accept": "application/vnd.github+json", **({"Authorization": f"Bearer {token}"} if token else {})}
+    try:
+        rows = fetch.get_json(f"https://api.github.com/repos/{repo}/issues?" + _q(
+            {"state": "open", "sort": "comments", "direction": "desc", "per_page": 10}), headers) or []
+    except Exception:
+        return []
+    rows = [r for r in rows if "pull_request" not in r and (r.get("comments") or 0) > 0]
+    return rows[: cfg["github_issues"]]
+
+
+def _read_huggingface(e, cfg, sources, fetch, reach=None):
     return _read_readme(f"https://huggingface.co/{e['external_id']}/raw/main/README.md", "모델 카드", cfg, fetch)
 
 
-def _read_wikipedia(e, cfg, sources, fetch):
+def _read_wikipedia(e, cfg, sources, fetch, reach=None):
     host = e["origin"]  # 예: ko.wikipedia.org
     query = urlencode({"action": "query", "prop": "extracts", "explaintext": 1, "redirects": 1,
                        "format": "json", "formatversion": 2, "titles": e["external_id"].replace("_", " ")})
@@ -87,15 +147,31 @@ def _read_wikipedia(e, cfg, sources, fetch):
     return body, f"문서 본문 {'앞 ' if cut else ''}{len(body):,}자"
 
 
-def _read_youtube(e, cfg, sources, fetch):
-    """설명란과 댓글 위 20개(관련순). 자막은 영상 주인만 받을 수 있어 읽지 않는다."""
-    from .sources import youtube
+def _read_youtube(e, cfg, sources, fetch, reach=None):
+    """자막(Agent Reach), 설명란, 댓글 위 20개(관련순) — 명세 6번.
 
-    yt_cfg = sources[e["source"]]
-    desc, _ = _clip(youtube.description(yt_cfg, fetch, e["external_id"]).strip(), cfg["max_chars"])
-    comments = youtube.top_comments({**yt_cfg, "comments_per_video": cfg["comments"]}, fetch, youtube._key(),
-                                    e["external_id"]) or []
+    자막은 YouTube Data API로는 영상 주인만 받을 수 있어 Agent Reach로만 읽는다.
+    설명란·댓글은 YouTube Data API 키로 읽는다. 키가 없으면 자막만 읽는다.
+    """
+    from .sources import SourceProblem, youtube
+
     parts, scope = [], []
+    reach_cfg = reach.cfg if reach is not None else {}
+    sub = _reach_text(reach, "youtube", "subtitle", f"https://www.youtube.com/watch?v={e['external_id']}",
+                      "--lang", reach_cfg.get("subtitle_langs", "ko,en"))
+    if sub:
+        sub, cut = _clip(" ".join(sub.split()), cfg["max_chars"])
+        parts.append(f"[자막]\n{sub}")
+        scope.append(f"자막 {'앞 ' if cut else ''}{len(sub):,}자{_AR}")
+    yt_cfg = sources[e["source"]]
+    try:
+        desc, _ = _clip(youtube.description(yt_cfg, fetch, e["external_id"]).strip(), cfg["max_chars"])
+        comments = youtube.top_comments({**yt_cfg, "comments_per_video": cfg["comments"]}, fetch, youtube._key(),
+                                        e["external_id"]) or []
+    except SourceProblem:
+        if not parts:
+            raise
+        desc, comments = "", []
     if desc:
         parts.append(f"[설명란]\n{desc}")
         scope.append(f"설명란 {len(desc):,}자")
@@ -106,7 +182,7 @@ def _read_youtube(e, cfg, sources, fetch):
     return "\n\n".join(parts), " · ".join(scope)
 
 
-def _read_geeknews(e, cfg, sources, fetch):
+def _read_geeknews(e, cfg, sources, fetch, reach=None):
     """글 페이지는 자동 읽기를 거절(403)해서, 피드에 든 요약 본문을 읽는다."""
     from .sources import geeknews
 
@@ -125,7 +201,7 @@ READERS = {
 }
 
 
-def run(conn, day: str, settings: dict, fetch, client=None, say=print) -> dict:
+def run(conn, day: str, settings: dict, fetch, client=None, say=print, reach=None) -> dict:
     """오늘의 실탐(명세 6번). 결과 요약을 돌려준다. LLM을 못 쓰면 이 단계만 건너뛴다.
 
     1. 읽을 주제: 점수 모드에서는 임계를 넘은 주제, "지금 인기" 모드에서는 어텐션이 높은 주제(위 top_n 개).
@@ -146,6 +222,11 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print) -> dict:
             say(f"  실탐: {result['note']}")
             return result
 
+    if reach is None:
+        try:
+            reach = agentreach.Reach(settings["agent_reach"])
+        except agentreach.Unavailable as e:
+            result["tool"] = f"{e} — 공개 주소에서 직접 읽음"
     since = (date.fromisoformat(day) - timedelta(days=cfg["no_reread_days"])).isoformat()
     recent = {r[0] for r in conn.execute("SELECT item_id FROM deepreads WHERE date > ?", (since,))}
     deadline = time.monotonic() + cfg["budget_minutes"] * 60
@@ -155,19 +236,23 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print) -> dict:
             if time.monotonic() > deadline:
                 result["note"] = f"시간 예산 {cfg['budget_minutes']}분을 다 써서 멈춤"
                 break
-            outcome = _read_topic(conn, day, settings, fetch, client, name, picks)
+            outcome = _read_topic(conn, day, settings, fetch, client, name, picks, reach)
             if isinstance(outcome, Exception):
                 result["note"] = f"{llm.explain_error(outcome)} — 남은 실탐은 건너뜀"
                 break
             result[key if outcome == "ok" else "failed"] += 1
         if result["note"]:
             break
+    if reach is not None:
+        result["tool"] = reach.summary()
+    db.save_deepread_tool(conn, day, result.get("tool", ""))
+    say(f"  실탐 도구: {result.get('tool', '')}")
     say(f"  실탐: 요약 {result['read']}건 · 탐색 슬롯 {result['explore_read']}건 · 건너뜀 {result['skipped']}건"
         f" · 실패 {result['failed']}건" + (f" — {result['note']}" if result["note"] else ""))
     return result
 
 
-def _read_topic(conn, day, settings, fetch, client, name: str, picks: list[tuple[str, dict]]):
+def _read_topic(conn, day, settings, fetch, client, name: str, picks: list[tuple[str, dict]], reach=None):
     """주제 하나: 고른 글들을 읽고 LLM 1회로 요약해 저장한다. "ok" | "failed" | LLM 오류(그날 실탐을 멈춤)."""
     cfg, llm_cfg, sources = settings["deepread"], settings["llm"], settings["sources"]
     parts, scopes = [], []
@@ -175,7 +260,7 @@ def _read_topic(conn, day, settings, fetch, client, name: str, picks: list[tuple
         if k:
             time.sleep(cfg["pause_sec"])  # 같은 곳을 연달아 두드리지 않는다
         try:
-            material, scope = READERS[sources[e["source"]].get("module", e["source"])](e, cfg, sources, fetch)
+            material, scope = READERS[sources[e["source"]].get("module", e["source"])](e, cfg, sources, fetch, reach)
         except Exception:
             material, scope = "", ""
         if material.strip():
