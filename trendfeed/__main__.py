@@ -50,11 +50,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--open", action="store_true", dest="open_page", help="만든 뒤 브라우저로 연다")
     p.add_argument("--date", help="이 날짜 기준 (기본: 가장 최근에 모은 날)")
 
-    p = sub.add_parser("import", help="날짜별 기록 파일로 저장 파일을 되살린다 (GitHub Actions 용)")
+    p = sub.add_parser("import", help="예전 방식(날짜별 글자 파일)의 기록을 저장 파일로 옮긴다(한 번만 쓴다)")
     p.add_argument("--dir", type=Path, required=True, help="days/ 폴더가 들어 있는 곳")
-    p = sub.add_parser("export", help="하루치 기록을 날짜별 파일로 쓴다 (GitHub Actions 용)")
-    p.add_argument("--dir", type=Path, required=True, help="days/ 폴더를 둘 곳")
-    p.add_argument("--date", help="이 날짜 치 (기본: 오늘)")
 
     p = sub.add_parser("install-schedule", help="매일 자동 실행을 등록한다(윈도우·맥)")
     p.add_argument("--print", action="store_true", dest="print_only", help="등록하지 않고 내용만 본다")
@@ -83,10 +80,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "import":
         conn = db.connect(config.db_path(settings))
         print(f"기록 파일 {archive.import_all(conn, args.dir, settings)}일 치를 읽어 저장 파일을 되살렸습니다.")
-        return 0
-    if args.command == "export":
-        conn = db.connect(config.db_path(settings))
-        print(f"기록 파일: {archive.export_day(conn, args.date or config.today(settings), args.dir)}")
         return 0
     if args.command == "install-schedule":
         return _install_schedule(settings, args.print_only, args.os)
