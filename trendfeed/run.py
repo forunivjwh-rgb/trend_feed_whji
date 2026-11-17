@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import random
 import time
 from statistics import median
 from datetime import datetime, timezone
@@ -22,7 +23,8 @@ def collect_all(settings: dict, conn, day: str, only: str | None = None, fetch=N
     for name, cfg in settings["sources"].items():
         if not cfg.get("enabled") or (only and name != only):
             continue
-        summaries.append(_collect_one(conn, day, name, module_for(name, cfg), cfg, fetch, settings.get("status")))
+        summaries.append(_collect_one(conn, day, name, module_for(name, cfg), cfg, fetch, settings.get("status"),
+                                      settings.get("explore")))
     return summaries
 
 
@@ -39,7 +41,25 @@ def _usual_count(conn, day: str, source: str, status_cfg: dict | None) -> float 
     return float(median(counts))
 
 
-def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch, status_cfg: dict | None = None) -> dict:
+def _explore(day: str, name: str, module, cfg: dict, fetch, explore_cfg: dict | None, main_count: int,
+             exclude: set[str]) -> tuple[list, list[str]]:
+    """탐색 슬롯(명세 2번): 목록 밖에서 무작위로 뽑은 글. (글들, 알릴 말들). 실패해도 수집은 계속한다."""
+    if not explore_cfg or not explore_cfg["enabled"] or not hasattr(module, "explore") or not main_count:
+        return [], []
+    share = explore_cfg["share"]
+    n = round(main_count * share / (1 - share))
+    rng = random.Random(f"{day}:{name}")  # 같은 날 다시 돌려도 같은 것을 뽑는다
+    try:
+        result = module.explore(cfg, fetch, rng, n, exclude)
+    except Exception as e:
+        return [], [f"탐색 실패 ({e if isinstance(e, SourceProblem) else _reason(e)})"]
+    for rec in result.records:
+        rec.snap_extra["explore"] = 1
+    return result.records, list(result.problems)
+
+
+def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch, status_cfg: dict | None = None,
+                 explore_cfg: dict | None = None) -> dict:
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     t0 = time.monotonic()
     records, followed, problems = [], [], []
@@ -69,8 +89,11 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch, status_cfg
             except Exception as e:
                 problems.append(f"다시 확인 실패 ({_reason(e)})")
 
+    explored, notes = _explore(day, name, module, cfg, fetch, explore_cfg, len(records),
+                               {r.external_id for r in records + followed})
+
     with conn:  # 한 소스의 저장은 전부 되거나 전부 안 되거나
-        db.save_records(conn, day, name, records + followed, captured_at=started)
+        db.save_records(conn, day, name, records + followed + explored, captured_at=started)
         # 하루에 여러 번 돌 수 있으므로 건수는 "오늘 하루 목록에 있었던 항목 수"로 센다.
         # 이번 실행이 실패해도 앞선 실행이 모은 것은 그대로 남는다.
         day_count = db.listed_count(conn, day, name)
@@ -87,11 +110,12 @@ def _collect_one(conn, day: str, name: str, module, cfg: dict, fetch, status_cfg
             "item_count": day_count,
             "followed_count": len(followed),
             "status": status,
-            "memo": " · ".join(problems),
+            "memo": " · ".join(problems + notes),  # 탐색에서 생긴 일은 알리기만 하고 "주의"로 치지 않는다
             "started_at": started,
             "duration_sec": time.monotonic() - t0,
         }
         db.save_run(conn, day, **summary)
+        summary["explore_count"] = db.explore_count(conn, day, name)
     return summary
 
 

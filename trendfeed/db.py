@@ -211,6 +211,7 @@ def recently_listed(conn: sqlite3.Connection, day: str, source: str, days: int) 
         SELECT DISTINCT i.external_id FROM items i
         JOIN item_snapshots s ON s.item_id = i.id
         WHERE i.source = ? AND s.listed = 1 AND s.date >= ? AND s.date < ?
+          AND COALESCE(json_extract(s.extra, '$.explore'), 0) = 0   -- 탐색으로 뽑은 글은 다음 날 숫자를 다시 적지 않는다
         ORDER BY i.id
         """,
         (source, since, day),
@@ -242,10 +243,19 @@ def save_feedback(conn, code: str, day: str, *, issue: int | None = None, intere
 
 
 def listed_count(conn: sqlite3.Connection, day: str, source: str) -> int:
-    """그날 이 소스의 목록에 있었던 항목 수(하루에 여러 번 돌려도 한 항목은 한 번)."""
+    """그날 이 소스의 목록에 있었던 항목 수(하루에 여러 번 돌려도 한 항목은 한 번). 탐색 글은 빼고 센다."""
     return conn.execute(
         "SELECT COUNT(*) FROM item_snapshots s JOIN items i ON i.id = s.item_id "
-        "WHERE i.source = ? AND s.date = ? AND s.listed = 1",
+        "WHERE i.source = ? AND s.date = ? AND s.listed = 1 AND COALESCE(json_extract(s.extra, '$.explore'), 0) = 0",
+        (source, day),
+    ).fetchone()[0]
+
+
+def explore_count(conn: sqlite3.Connection, day: str, source: str) -> int:
+    """그날 이 소스에서 탐색으로 뽑은 글 수."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM item_snapshots s JOIN items i ON i.id = s.item_id "
+        "WHERE i.source = ? AND s.date = ? AND COALESCE(json_extract(s.extra, '$.explore'), 0) = 1",
         (source, day),
     ).fetchone()[0]
 
@@ -261,6 +271,7 @@ def save_run(
     memo: str,
     started_at: str,
     duration_sec: float,
+    **_ignored,
 ) -> None:
     conn.execute(
         """

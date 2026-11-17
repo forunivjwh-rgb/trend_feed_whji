@@ -117,6 +117,36 @@ def collect(cfg: dict, fetch) -> CollectResult:
     return CollectResult(list(records.values()), problems)
 
 
+def explore(cfg: dict, fetch, rng, n: int, exclude: set[str]) -> CollectResult:
+    """탐색(명세 2번): 다른 카테고리의 인기 차트에서 무작위로 n개. 카테고리마다 할당량 1.
+
+    2025-07 뒤로 인기 차트는 음악·영화·게임 위주라, 다른 카테고리는 비어 있거나 거절될 수 있다.
+    그런 카테고리는 건너뛰고, 그래도 모자라면 있는 만큼만 담는다.
+    """
+    key = _key()
+    categories = list(cfg["explore_categories"])
+    rng.shuffle(categories)
+    pool: list[Record] = []
+    tried = []
+    for cat in categories[: cfg["explore_max_categories"]]:
+        tried.append(str(cat))
+        try:
+            data = _call(cfg, fetch, key, {"chart": "mostPopular", "regionCode": cfg["regions"][0],
+                                            "videoCategoryId": cat, "maxResults": _PAGE_MAX})
+        except SourceProblem:
+            continue
+        for item in data.get("items", []):
+            rec = to_record(item, rank=None, listed=True, region=cfg["regions"][0])
+            if rec and rec.external_id not in exclude and rec.external_id not in {r.external_id for r in pool}:
+                rec.item_extra["explore_from"] = f"카테고리 {cat}"
+                pool.append(rec)
+        if len(pool) >= n * 2:
+            break
+    records = rng.sample(pool, min(len(pool), n))
+    notes = [] if records else [f"탐색: 다른 카테고리 차트가 비어 있음 (시도: {', '.join(tried)})"]
+    return CollectResult(records, notes)
+
+
 def description(cfg: dict, fetch, video_id: str) -> str:
     """영상 설명란(실탐에서 읽는다). 할당량 1."""
     data = _call(cfg, fetch, _key(), {"id": video_id, "maxResults": 1})

@@ -108,3 +108,17 @@ def refetch(cfg: dict, fetch, external_ids: list[str]) -> CollectResult:
             records.append(rec)
     problems = [f"다시 확인할 글 {failed}개를 읽지 못함"] if failed else []
     return CollectResult(records, problems)
+
+
+def explore(cfg: dict, fetch, rng, n: int, exclude: set[str]) -> CollectResult:
+    """탐색(명세 2번): 인기글 목록 밖, 최신 글(newstories)에서 무작위로 n개."""
+    ids = [i for i in fetch.get_json(f"{cfg['api_base']}/newstories.json") if str(i) not in exclude]
+    picked = rng.sample(ids, min(len(ids), n * 2))  # 지워진 글·구인 공고가 섞여 있어 넉넉히 읽는다
+    records = []
+    for data in _fetch_items(cfg, fetch, picked):
+        if isinstance(data, Exception):
+            continue
+        rec = to_record(data, rank=None, listed=True)
+        if rec and len(records) < n:
+            records.append(rec)
+    return CollectResult(records)

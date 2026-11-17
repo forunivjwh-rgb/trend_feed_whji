@@ -61,8 +61,12 @@ def velocity(spec: dict, snap: dict, prev: dict | None, published_at: str | None
     return None, None
 
 
-def now_popular(conn, day: str, settings: dict) -> list[dict]:
-    """그날 목록에 있던 항목을 어텐션이 큰 순서로 돌려준다."""
+def now_popular(conn, day: str, settings: dict, explore: bool = False) -> list[dict]:
+    """그날 목록에 있던 항목을 어텐션이 큰 순서로 돌려준다.
+
+    탐색으로 뽑은 글(명세 2번)은 순위에 넣지 않고, 소스의 "보통 값"을 잴 때도 빼다.
+    explore=True 면 탐색 글만, 목록 글로 잰 보통 값에 견준 어텐션과 함께 돌려준다.
+    """
     cfg = settings["attention"]
     since = (date.fromisoformat(day) - timedelta(days=cfg["compare_within_days"])).isoformat()
     prev_by_item: dict[int, dict] = {}
@@ -85,22 +89,23 @@ def now_popular(conn, day: str, settings: dict) -> list[dict]:
         snap["item_extra"] = json.loads(snap["item_extra"])
         spec = module_for(snap["source"], settings["sources"][snap["source"]]).VELOCITY
         v, basis = velocity(spec, snap, prev_by_item.get(snap["item_id"]), snap["published_at"], cfg)
-        snap.update(velocity=v, basis=basis, unit=spec["unit"])
+        snap.update(velocity=v, basis=basis, unit=spec["unit"], explore=bool(snap["extra"].get("explore")))
         entries.append(snap)
 
-    # 소스 안에서 "가운데 항목"의 속도로 나눈다.
+    # 소스 안에서 "가운데 항목"(목록 글만)의 속도로 나눈다.
     for source in {e["source"] for e in entries}:
         group = [e for e in entries if e["source"] == source and e["velocity"] is not None]
+        main = [e["velocity"] for e in group if not e["explore"]]
         if not group:
             continue
-        typical = max(median(e["velocity"] for e in group), cfg["median_floor"])
+        typical = max(median(main) if main else median(e["velocity"] for e in group), cfg["median_floor"])
         weight = settings["sources"][source]["weight"]
         for e in group:
             e["typical"] = typical
             e["times_typical"] = e["velocity"] / typical
             e["attention"] = e["times_typical"] * weight
 
-    ranked = [e for e in entries if e.get("attention") is not None]
+    ranked = [e for e in entries if e.get("attention") is not None and e["explore"] == explore]
     ranked.sort(key=lambda e: (-e["attention"], e["source"], e["rank"] or 0))
     for i, e in enumerate(ranked, start=1):
         e["place"] = i

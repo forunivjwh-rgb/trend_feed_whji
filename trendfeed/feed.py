@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config, feedback, llm, rank, rollup, score
+from . import config, db, feedback, llm, rank, rollup, score
 from .run import STATUS_LABEL
 
 CSS = """
@@ -367,7 +367,8 @@ def _llm_stat(conn, day: str) -> str:
 
 def load_topics(conn, day: str, settings: dict) -> dict[str, dict]:
     """그날의 주제들을 화면에 쓸 모양으로 모은다: 점수·항목·곡선·실탐·왜 올랐나."""
-    entries = {e["item_id"]: e for e in rank.now_popular(conn, day, settings)}
+    entries = {e["item_id"]: e for e in rank.now_popular(conn, day, settings)
+               + rank.now_popular(conn, day, settings, explore=True)}
     days = score.run_days(conn, day)[-settings["feed"]["curve_days"]:]
     out: dict[str, dict] = {}
     for r in conn.execute(
@@ -378,7 +379,8 @@ def load_topics(conn, day: str, settings: dict) -> dict[str, dict]:
         t = dict(r)
         t["code"] = r["topic_code"]
         t["platforms"] = sorted(json.loads(r["platforms"]))
-        t["explore"] = False
+        t["explore"] = False          # Top 5 다섯째 자리에 오른 탐색 주제만 True 가 된다
+        t["from_explore"] = bool(r["explore"])
         t["keywords"] = json.loads(r["keywords"] or "[]")
         t["is_new"] = (date.fromisoformat(day) - date.fromisoformat(r["first_seen"])).days < settings["score"]["baseline_days"]
         t["items"] = []
@@ -450,6 +452,8 @@ def build(conn, day: str, settings: dict) -> str:
     )
 
     ok = sum(r["item_count"] > 0 for r in runs)
+    explore_by_source = {r["source"]: db.explore_count(conn, day, r["source"]) for r in runs}
+    explore_total = sum(explore_by_source.values())
     total_items = sum(r["item_count"] for r in runs)
     run_row = conn.execute("SELECT started_at, finished_at FROM daily_runs WHERE date = ?", (day,)).fetchone()
     started = run_row["started_at"] if run_row else min((r["started_at"] for r in runs), default=None)
@@ -464,7 +468,7 @@ def build(conn, day: str, settings: dict) -> str:
     passed = sum(1 for t in topics_today.values() if t["passed"])
     reads = sum(1 for t in topics_today.values() if t.get("deepread"))
     stats = [
-        ("수집", f"{total_items}건 · 소스 {len(runs)}곳 중 {ok}곳 수집됨"),
+        ("수집", f"{total_items}건 + 탐색 {explore_total}건 · 소스 {len(runs)}곳 중 {ok}곳 수집됨"),
         ("주제", f"{len(topics_today)}개 · 순위에 든 주제 {len(ranked)}개"),
         ("기준선" if mode == "early" else "임계 통과", f"{min(days, need)}/{need}일" if mode == "early" else f"{passed}개"),
         ("실탐 · 요약", _llm_stat(conn, day)),
@@ -478,7 +482,8 @@ def build(conn, day: str, settings: dict) -> str:
         status_rows.append(
             f'<tr><td><span class="row" style="gap:8px;font-weight:600"><span class="dot" data-p="{escape(src.get("code", ""))}"></span>'
             f'{escape(src.get("label", r["source"]))}</span></td><td>{escape(src.get("field", ""))}</td>'
-            f'<td>{r["item_count"]}건</td><td>{src.get("weight", "")}</td>'
+            f'<td>{r["item_count"]}건' + (f' + 탐색 {explore_by_source[r["source"]]}' if explore_by_source.get(r["source"]) else "")
+            + f'</td><td>{src.get("weight", "")}</td>'
             f'<td><span class="st {escape(r["status"])}"><i></i>{STATUS_LABEL[r["status"]]}</span></td><td>{escape(note)}</td></tr>'
         )
     by_purpose = dict(conn.execute("SELECT purpose, COUNT(*) FROM llm_calls WHERE date = ? GROUP BY purpose", (day,)).fetchall())
@@ -553,7 +558,7 @@ def build(conn, day: str, settings: dict) -> str:
 
   <section>
     <div><h2>탐색 슬롯</h2>
-    <p class="sub">순위와 상관없이 무작위로 뽑은 {len(picks)}건이에요. 이 중 1건이 위 Top 5의 마지막 자리로 올라갔어요.</p></div>
+    <p class="sub">관심 목록 밖에서 무작위로 모은 글(수집의 약 20%) 중 {len(picks)}건이에요. 점수와 상관없고, 이 중 1건이 위 Top 5의 마지막 자리로 올라갔어요.</p></div>
     <div class="card list">{explore_rows or '<p class="sub" style="padding:10px 0">뽑을 주제가 없어요.</p>'}</div>
   </section>
 

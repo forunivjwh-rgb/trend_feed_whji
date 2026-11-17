@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+from urllib.parse import quote
 from html.parser import HTMLParser
 
 from . import Blocked, CollectResult, Record
@@ -184,3 +185,20 @@ def collect(cfg: dict, fetch) -> CollectResult:
 def _reason(e: Exception) -> str:
     code = getattr(e, "code", None)
     return f"HTTP {code}" if code else type(e).__name__
+
+
+def explore(cfg: dict, fetch, rng, n: int, exclude: set[str]) -> CollectResult:
+    """탐색(명세 2번): 전체 trending 목록 밖, 무작위로 고른 언어 하나의 일간 trending 에서 n개."""
+    lang = rng.choice(cfg["explore_languages"])
+    try:
+        html = fetch.get_text(f"{cfg['base_url']}/{quote(lang)}?since=daily")
+    except Exception as e:
+        if getattr(e, "code", None) in _REFUSED:
+            raise Blocked(f"GitHub가 요청을 막아 건너뜀 ({_reason(e)})") from None
+        raise
+    repos = [r for r in parse(html) if r["repo"] not in exclude]
+    records = merge({"daily": rng.sample(repos, min(len(repos), n))})
+    for rec in records:
+        rec.rank = None
+        rec.item_extra["explore_from"] = f"{lang} trending"
+    return CollectResult(records)

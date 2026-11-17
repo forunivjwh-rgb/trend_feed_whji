@@ -168,6 +168,8 @@ def _collect(settings: dict, only: str | None, say=print) -> int:
 
 def _run_line(s) -> str:
     line = f"{s['source']:<16} {STATUS_LABEL[s['status']]:<6} {s['item_count']:>3}건"
+    if s.get("explore_count"):
+        line += f" + 탐색 {s['explore_count']}건"
     if s["followed_count"]:
         line += f" (+다시 확인 {s['followed_count']}건)"
     line += f"  {s['duration_sec']:.1f}초"
