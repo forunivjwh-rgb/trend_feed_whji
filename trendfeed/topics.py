@@ -274,3 +274,32 @@ def keywords_of(items: list[dict], n: int, stopwords: set[str]) -> list[str]:
             first_seen.setdefault(w, len(first_seen))
     ranked = sorted(counts, key=lambda w: (-counts[w], first_seen[w]))
     return ranked[:n]
+
+
+ROLES = ("대표", "발단", "최다 논의")
+
+
+def evidence(items: list[dict], n: int) -> list[tuple[str, dict]]:
+    """근거 글(명세 6번·7번): 대표(어텐션이 가장 큰 것) · 발단(가장 먼저 나온 것) · 최다 논의(댓글이 가장 많은 것).
+
+    셋이 겹치면 줄어든다. n 이 더 크면 나머지는 어텐션 순으로 "함께"를 채운다. 피드 카드와 실탐이 같이 쓴다.
+    """
+    picked, used = [], set()
+
+    def take(role, item):
+        if item is not None and item["item_id"] not in used and len(picked) < n:
+            picked.append((role, item))
+            used.add(item["item_id"])
+
+    if not items:
+        return picked
+    take("대표", max(items, key=lambda e: e["attention"]))
+    rest = [e for e in items if e["item_id"] not in used]
+    if rest:
+        take("발단", min(rest, key=lambda e: (e["published_at"] or e["first_seen"] + "T23:59:59", e["item_id"])))
+    rest = [e for e in items if e["item_id"] not in used and e.get("comments")]
+    if rest:
+        take("최다 논의", max(rest, key=lambda e: e["comments"]))
+    for e in sorted(items, key=lambda e: -e["attention"]):
+        take("함께", e)
+    return picked
