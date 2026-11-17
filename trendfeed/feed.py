@@ -203,7 +203,7 @@ def _mark(t: dict, settings: dict, day: str) -> str:
     return f'<a class="chip line" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">몰랐는데 흥미로움</a>'
 
 
-def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "") -> str:
+def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "", multi: str = "") -> str:
     by_code = _platform_labels(sources)
     if t["mode"] == "early" or t["score"] is None:
         big_label, big = "오늘 어텐션", f"{t['attention']:.1f}"
@@ -225,6 +225,7 @@ def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "") -> str:
       <div class="row">
         <b>#{place}</b>
         {_label_chip(t)}
+        {multi}
         <span class="small">{escape(t['field'])}</span>
         <span class="small">{escape(t['code'])}</span>
       </div>
@@ -254,7 +255,14 @@ def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "") -> str:
 </article>"""
 
 
-def _row(t: dict, sources: dict, chip: str = "") -> str:
+def _multi(t: dict, settings: dict) -> str:
+    """출처가 설정의 multi_origin_badge 곳 이상이면 "여러 곳에서 동시에 뜸" 표시."""
+    if t["origins"] >= settings["score"]["multi_origin_badge"]:
+        return f'<span class="chip line">여러 곳에서 동시에 뜸 · 출처 {t["origins"]}곳</span>'
+    return ""
+
+
+def _row(t: dict, sources: dict, chip: str = "", multi: str = "") -> str:
     by_code = _platform_labels(sources)
     value = f"점수 {t['score']:.1f}" if t["score"] is not None else f"어텐션 {t['attention']:.1f}"
     rank_txt = f"#{t['rank']}" if t["rank"] else "순위 밖"
@@ -268,7 +276,7 @@ def _row(t: dict, sources: dict, chip: str = "") -> str:
 <div class="item">
   <div><div class="row">{_dots(t['platforms'], by_code)}<span class="small">{rank_txt} · {escape(t['code'])}</span></div>
   <div class="t">{name_html}</div><div class="meta">{meta_html}</div></div>
-  <div class="row"><span style="font-size:13px">{escape(value)} · 출처 {t['origins']}곳</span>{read}{chip}</div>
+  <div class="row"><span style="font-size:13px">{escape(value)} · 출처 {t['origins']}곳</span>{multi}{read}{chip}</div>
 </div>"""
 
 
@@ -425,7 +433,7 @@ def build(conn, day: str, settings: dict) -> str:
     top5 = top + picks[:1]
     for t in top5:
         t["interesting"] = t["code"] in marked
-    cards = [_card(t, i, sources, cfg, _mark(t, settings, day)) for i, t in enumerate(top5, start=1)]
+    cards = [_card(t, i, sources, cfg, _mark(t, settings, day), _multi(t, settings)) for i, t in enumerate(top5, start=1)]
     liked = sum(t["interesting"] for t in top5)
 
     # 분야별 Top 3 (명세 5번: 분야마다 3건씩 따로 보여 준다)
@@ -436,11 +444,11 @@ def build(conn, day: str, settings: dict) -> str:
     field_html = []
     for field in fields:
         picks_f = [t for t in ranked if t["field"] == field][: cfg["per_field_n"]]
-        body = "".join(_row(t, sources) for t in picks_f) or '<p class="sub" style="padding:10px 0">오늘 순위에 든 주제가 없어요.</p>'
+        body = "".join(_row(t, sources, multi=_multi(t, settings)) for t in picks_f) or '<p class="sub" style="padding:10px 0">오늘 순위에 든 주제가 없어요.</p>'
         field_html.append(f'<h3 style="font-size:17px">{escape(field)}</h3><div class="card list">{body}</div>')
 
     explore_rows = "".join(
-        _row(t, sources, '<span class="chip">Top 5로 올라감</span>' if i == 0 else "") for i, t in enumerate(picks)
+        _row(t, sources, '<span class="chip">Top 5로 올라감</span>' if i == 0 else "", _multi(t, settings)) for i, t in enumerate(picks)
     )
 
     ok = sum(r["item_count"] > 0 for r in runs)
@@ -486,9 +494,12 @@ def build(conn, day: str, settings: dict) -> str:
                  + f" · LLM {sum(by_purpose.values())}회(이름·병합 {by_purpose.get('topics', 0)} · 실탐 "
                  f"{by_purpose.get('deepread', 0)} · 왜 올랐나 {by_purpose.get('why', 0)}) · 토큰 입력 {tin:,} · 출력 {tout:,}"
                  f" · 모델 {settings['llm']['model']}")
-    tool = conn.execute("SELECT deepread_tool FROM daily_runs WHERE date = ?", (day,)).fetchone()
+    tool = conn.execute("SELECT deepread_tool, direct_reads, direct_fails FROM daily_runs WHERE date = ?",
+                        (day,)).fetchone()
     if tool and tool[0]:
         run_facts += f" · 실탐 도구: {tool[0]}"
+    if tool and tool[1]:
+        run_facts += f" · 직접 읽기 실패 {tool[2]}건/{tool[1]}건 중"
     for name, field, memo in cfg.get("empty_slots", []):
         status_rows.append(
             f'<tr><td><span class="row" style="gap:8px;font-weight:600"><span class="dot"></span>{escape(name)}</span></td>'

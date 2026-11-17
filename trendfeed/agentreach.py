@@ -33,11 +33,17 @@ class Unavailable(Exception):
     """설치되지 않았거나 설정에서 꺼져 있다."""
 
 
-class Stopped(Exception):
+class ReachError(Exception):
+    def __init__(self, message: str, code: str = ""):
+        super().__init__(message)
+        self.code = code  # Agent Reach 가 준 오류 이름(예: PLATFORM_BLOCKED)
+
+
+class Stopped(ReachError):
     """플랫폼이 막아서 그 채널을 그날 멈췄다."""
 
 
-class Failed(Exception):
+class Failed(ReachError):
     """이번 한 건만 못 읽었다(글이 없음, 자막이 없음 등)."""
 
 
@@ -91,6 +97,7 @@ class Reach:
             raise Unavailable("Agent Reach가 설치되지 않음 — python -m trendfeed agent-reach install")
         self.cfg, self.runner = cfg, runner or self._run
         self.stopped: dict[str, str] = {}   # 채널 → 멈춘 이유
+        self.stopped_codes: dict[str, str] = {}
         self.used: dict[str, int] = {}      # 채널 → 성공한 횟수
 
     def allowed(self, channel: str) -> bool:
@@ -101,7 +108,7 @@ class Reach:
         if channel not in self.cfg["channels"]:
             raise Unavailable(f"{channel} 채널은 설정에서 쓰지 않음")
         if channel in self.stopped:
-            raise Stopped(self.stopped[channel])
+            raise Stopped(self.stopped[channel], self.stopped_codes.get(channel, ""))
         out = self.runner([channel, action, *args])
         if out.get("ok"):
             self.used[channel] = self.used.get(channel, 0) + 1
@@ -111,8 +118,9 @@ class Reach:
         if code in STOP_CODES:
             why = "로봇 아님 확인을 요구함" if code == "PLATFORM_BLOCKED" else "횟수 제한에 걸림"
             self.stopped[channel] = f"{_CHANNEL_NAMES.get(channel, channel)}: {why} — 오늘은 더 부르지 않음"
-            raise Stopped(self.stopped[channel])
-        raise Failed(f"{code}: {str(err.get('message', ''))[:200]}")
+            self.stopped_codes[channel] = code
+            raise Stopped(self.stopped[channel], code)
+        raise Failed(f"{code}: {str(err.get('message', ''))[:200]}", code)
 
     def _run(self, args: list[str]) -> dict:
         with tempfile.TemporaryDirectory(prefix="trendfeed-reach-") as tmp:  # repo 폴더(.env 가 있는 곳) 밖에서 돈다
@@ -136,7 +144,13 @@ class Reach:
 
 
 def check(cfg: dict, say=print) -> int:
-    """설치와 공개 채널이 이 컴퓨터(또는 Actions 서버)에서 되는지 한 번씩 확인한다. 저장하지 않는다."""
+    """설치와 공개 채널이 이 컴퓨터(또는 Actions 서버)에서 되는지 한 번씩 확인한다. 저장하지 않는다.
+
+    설정의 known_limits 에 적힌 (채널, 오류) 조합은 이미 알려진 한계라 "주의"로만 적고 실패로 치지 않는다.
+    그 밖의 실패가 하나라도 있으면 1을 돌려준다(Actions 에서 빨간 ×).
+    """
+    known = {(c, code) for c, code in cfg.get("known_limits", [])}
+    on_actions = os.environ.get("GITHUB_ACTIONS") == "true"
     try:
         reach = Reach(cfg)
     except Unavailable as e:
@@ -155,6 +169,13 @@ def check(cfg: dict, say=print) -> int:
             text = (items[0].get("text") or "") if items else ""
             say(f"  [정상] {label} → {len(items)}건, 글자 {len(text):,}자")
         except (Stopped, Failed) as e:
-            bad += 1
-            say(f"  [안 됨] {label} → {e}")
+            if (channel, e.code) in known:
+                say(f"  [주의] {label} → {e} (이미 알려진 한계)")
+                if on_actions:  # Actions 화면에 노란 "주의"로 보이게
+                    say(f"::warning title=Agent Reach 주의::{_CHANNEL_NAMES.get(channel, channel)} — {e} (이미 알려진 한계)")
+            else:
+                bad += 1
+                say(f"  [안 됨] {label} → {e}")
+                if on_actions:
+                    say(f"::error title=Agent Reach 실패::{_CHANNEL_NAMES.get(channel, channel)} — {e}")
     return 1 if bad else 0

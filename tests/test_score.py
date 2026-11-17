@@ -55,14 +55,14 @@ class ComputeTest(unittest.TestCase):
     def ranks(self, day):
         return {r["topic_code"]: dict(r) for r in self.conn.execute("SELECT * FROM topic_score WHERE date = ?", (day,))}
 
-    def test_early_mode_ranks_by_attention_and_still_needs_three_origins(self):
-        day = self.add_day(1, {"T-0001": (2.0, ["HN"], 3), "T-0002": (5.0, ["HN", "GN"], 4),
-                               "T-0003": (9.0, ["YT"], 2)})
+    def test_early_mode_ranks_by_attention_and_still_needs_min_origins(self):
+        day = self.add_day(1, {"T-0001": (2.0, ["HN"], 2), "T-0002": (5.0, ["HN", "GN"], 4),
+                               "T-0003": (9.0, ["YT"], 1)})
         summary = score.compute(self.conn, day, SETTINGS)
         self.assertEqual((summary["mode"], summary["days"], summary["ranked"], summary["passed"]), ("early", 1, 2, 0))
         r = self.ranks(day)
         self.assertEqual((r["T-0002"]["rank"], r["T-0001"]["rank"]), (1, 2))
-        self.assertIsNone(r["T-0003"]["rank"])  # 어텐션이 가장 커도 출처 2곳이면 순위 밖(명세 3번)
+        self.assertIsNone(r["T-0003"]["rank"])  # 어텐션이 가장 커도 출처가 min_origins(2) 미만이면 순위 밖(명세 3번)
         self.assertIsNone(r["T-0002"]["score"])
         self.assertEqual(r["T-0002"]["breadth"], 2)
 
@@ -117,7 +117,7 @@ class ComputeTest(unittest.TestCase):
 
     def test_constants_live_in_the_settings_file(self):
         for name, value in {"z_cap": 8, "accel_weight": 1.5, "breadth_weight": 0.5, "threshold": 5.0,
-                            "min_origins": 3, "baseline_days": 14, "baseline_max_days": 28, "z_floor": 0.8}.items():
+                            "min_origins": 2, "multi_origin_badge": 3, "baseline_days": 14, "baseline_max_days": 28, "z_floor": 0.8}.items():
             self.assertEqual(CFG[name], value, name)
 
 

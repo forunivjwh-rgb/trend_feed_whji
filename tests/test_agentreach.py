@@ -85,6 +85,45 @@ class ReachTest(unittest.TestCase):
         self.assertNotIn("web", CFG["channels"])  # 바깥 서비스로 주소를 보내는 채널은 사용자가 정하기 전까지 끔
 
 
+class CheckTest(unittest.TestCase):
+    """점검: 알려진 한계(유튜브 막힘)는 "주의", 그 밖의 실패만 실패(빨간 ×)."""
+
+    def run_check(self, answers, actions=True):
+        said = []
+        runner = Runner({"version": {"ok": True, "result": {"version": "1.6.1"}}, **answers})
+        real = agentreach.Reach
+
+        def fake_reach(cfg):
+            return real(cfg, runner=runner)
+
+        env = {"GITHUB_ACTIONS": "true"} if actions else {}
+        with mock.patch.object(agentreach, "Reach", fake_reach), mock.patch.dict(os.environ, env, clear=False):
+            if not actions:
+                os.environ.pop("GITHUB_ACTIONS", None)
+            code = agentreach.check(CFG, say=said.append)
+        return code, "\n".join(said)
+
+    def test_known_youtube_block_is_only_a_warning(self):
+        code, out = self.run_check({"youtube": err("PLATFORM_BLOCKED"), "github": ok("readme")})
+        self.assertEqual(code, 0)
+        self.assertIn("[주의] 유튜브", out)
+        self.assertIn("::warning title=Agent Reach 주의::", out)
+        self.assertNotIn("::error", out)
+
+    def test_unexpected_failure_is_red(self):
+        code, out = self.run_check({"youtube": ok("자막"), "github": err("UPSTREAM_BROKEN")})
+        self.assertEqual(code, 1)
+        self.assertIn("[안 됨] GitHub", out)
+        self.assertIn("::error title=Agent Reach 실패::", out)
+        # 유튜브라도 막힘이 아닌 다른 오류는 예상 밖이다
+        code, out = self.run_check({"youtube": err("UPSTREAM_BROKEN"), "github": ok("readme")}, actions=False)
+        self.assertEqual(code, 1)
+        self.assertNotIn("::", out)  # Actions 밖에서는 화면 표시용 줄을 쓰지 않는다
+
+    def test_known_limits_live_in_the_settings_file(self):
+        self.assertEqual(CFG["known_limits"], [["youtube", "PLATFORM_BLOCKED"]])
+
+
 class ReadersWithReachTest(unittest.TestCase):
     def test_youtube_reads_subtitles_with_agent_reach_then_description_and_comments(self):
         from tests.test_youtube import with_key
@@ -156,11 +195,13 @@ class ReadersWithReachTest(unittest.TestCase):
         t.setUp()
         try:
             reach = agentreach.Reach(CFG, runner=Runner({}))
-            deepread.run(t.conn, DAY, {**SETTINGS, "deepread": {**SETTINGS["deepread"], "pause_sec": 0}},
+            deepread.run(t.conn, DAY, {**SETTINGS, "deepread": {**SETTINGS["deepread"], "pause_sec": 0, "read_explore": False}},
                          __import__("tests.test_deepread", fromlist=["Fetch"]).Fetch(), client=FakeClient(),
                          say=lambda s: None, reach=reach)
             row = t.conn.execute("SELECT deepread_tool FROM daily_runs WHERE date = ?", (DAY,)).fetchone()
             self.assertEqual(row[0], f"Agent Reach({CFG['commit'][:7]}) 부른 적 없음")  # 위키는 직접 읽는다
+            counts = t.conn.execute("SELECT direct_reads, direct_fails FROM daily_runs WHERE date = ?", (DAY,)).fetchone()
+            self.assertEqual(tuple(counts), (10, 0))
         finally:
             for cleanup in reversed(t._cleanups):
                 cleanup[0](*cleanup[1], **cleanup[2])

@@ -210,7 +210,9 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print, reach=Non
     같은 주제는 7일 안에 다시 읽지 않는다. 읽은 원문은 요약에만 쓰고 저장하지 않는다.
     """
     cfg = settings["deepread"]
-    result = {"read": 0, "explore_read": 0, "skipped": 0, "failed": 0, "note": ""}
+    # direct / direct_failed: Agent Reach 없이 공개 주소에서 직접 읽은 글 수와 그중 실패한 수
+    # (웹 읽기를 Agent Reach 로 옮길지 정하려고 센다. 사용자 결정 2026-11-17)
+    result = {"read": 0, "explore_read": 0, "skipped": 0, "failed": 0, "note": "", "direct": 0, "direct_failed": 0}
     if not cfg["enabled"]:
         result["note"] = "실탐이 설정에서 꺼져 있음"
         return result
@@ -236,7 +238,7 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print, reach=Non
             if time.monotonic() > deadline:
                 result["note"] = f"시간 예산 {cfg['budget_minutes']}분을 다 써서 멈춤"
                 break
-            outcome = _read_topic(conn, day, settings, fetch, client, name, picks, reach)
+            outcome = _read_topic(conn, day, settings, fetch, client, name, picks, reach, result)
             if isinstance(outcome, Exception):
                 result["note"] = f"{llm.explain_error(outcome)} — 남은 실탐은 건너뜀"
                 break
@@ -245,14 +247,15 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print, reach=Non
             break
     if reach is not None:
         result["tool"] = reach.summary()
-    db.save_deepread_tool(conn, day, result.get("tool", ""))
+    db.save_deepread_tool(conn, day, result.get("tool", ""), result["direct"], result["direct_failed"])
     say(f"  실탐 도구: {result.get('tool', '')}")
     say(f"  실탐: 요약 {result['read']}건 · 탐색 슬롯 {result['explore_read']}건 · 건너뜀 {result['skipped']}건"
         f" · 실패 {result['failed']}건" + (f" — {result['note']}" if result["note"] else ""))
     return result
 
 
-def _read_topic(conn, day, settings, fetch, client, name: str, picks: list[tuple[str, dict]], reach=None):
+def _read_topic(conn, day, settings, fetch, client, name: str, picks: list[tuple[str, dict]], reach=None,
+                counts: dict | None = None):
     """주제 하나: 고른 글들을 읽고 LLM 1회로 요약해 저장한다. "ok" | "failed" | LLM 오류(그날 실탐을 멈춤)."""
     cfg, llm_cfg, sources = settings["deepread"], settings["llm"], settings["sources"]
     parts, scopes = [], []
@@ -263,6 +266,10 @@ def _read_topic(conn, day, settings, fetch, client, name: str, picks: list[tuple
             material, scope = READERS[sources[e["source"]].get("module", e["source"])](e, cfg, sources, fetch, reach)
         except Exception:
             material, scope = "", ""
+        if counts is not None and _AR not in scope:  # Agent Reach 를 안 거치고 직접 읽은 글
+            counts["direct"] += 1
+            # 아무것도 못 읽었거나, 일부(예: HN 링크 원문)를 열지 못했으면 실패로 센다
+            counts["direct_failed"] += not material.strip() or "열지 못함" in scope
         if material.strip():
             label = sources[e["source"]]["label"]
             parts.append(f"[{role} · {label}] {e['title']}\n{material}")
