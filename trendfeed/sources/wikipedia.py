@@ -57,6 +57,38 @@ def to_records(project: str, articles: list[dict], views_date: str, limit: int) 
     return records
 
 
+def _top(cfg: dict, fetch):
+    """가장 최근에 나온 하루치 조회수 목록. (문서들, 그날, 거슬러 간 날 수) 또는 None."""
+    today = _utc_today()
+    for back in range(1, cfg["lookback_days"] + 1):
+        if back > 1:
+            time.sleep(cfg["pause_sec"])
+        d = today - timedelta(days=back)
+        try:
+            data = fetch.get_json(f"{cfg['api_base']}/{cfg['project']}/all-access/{d:%Y/%m/%d}")
+        except Exception as e:
+            if getattr(e, "code", None) == 404:
+                continue
+            raise
+        return data["items"][0]["articles"], d, back
+    return None
+
+
+def explore(cfg: dict, fetch, rng, n: int, exclude: set[str]) -> CollectResult:
+    """탐색(명세 2번): 조회수 위 limit 개 밖(limit+1 ~ 1000위)의 문서에서 무작위로 n개."""
+    time.sleep(cfg["pause_sec"])  # 방금 같은 곳에 물었으므로 쉬었다가 묻는다
+    top = _top(cfg, fetch)
+    if top is None:
+        return CollectResult([])
+    articles, d, _ = top
+    beyond = to_records(cfg["project"], articles, d.isoformat(), len(articles))[cfg["limit"]:]
+    beyond = [r for r in beyond if r.external_id not in exclude]
+    records = rng.sample(beyond, min(len(beyond), n))
+    for rec in records:
+        rec.rank = None
+    return CollectResult(records)
+
+
 def collect(cfg: dict, fetch) -> CollectResult:
     today = _utc_today()
     for back in range(1, cfg["lookback_days"] + 1):

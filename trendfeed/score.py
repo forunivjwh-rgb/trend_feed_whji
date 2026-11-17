@@ -54,6 +54,12 @@ def compute(conn, day: str, settings: dict) -> dict:
     ):
         history.setdefault(r["topic_code"], {})[r["date"]] = r["attention"]
 
+    # 탐색 주제: 그날 속한 글이 모두 탐색으로 뽑힌 글인 주제(순위와 따로 센다)
+    explore_codes = {code for code, all_explore in conn.execute(
+        "SELECT m.topic_code, MIN(COALESCE(json_extract(s.extra, '$.explore'), 0)) FROM topic_items m "
+        "JOIN item_snapshots s ON s.item_id = m.item_id AND s.date = m.date WHERE m.date = ? GROUP BY m.topic_code",
+        (day,),
+    ) if all_explore == 1}
     scored = []
     for r in rows:
         platforms = json.loads(r["platforms"])
@@ -67,7 +73,8 @@ def compute(conn, day: str, settings: dict) -> dict:
             entry["score"] = (min(max(st["z"], 0.0), cfg["z_cap"])
                               + cfg["accel_weight"] * math.log(max(st["accel"], 1.0))
                               + cfg["breadth_weight"] * (breadth - 1))
-        entry["eligible"] = r["origins"] >= cfg["min_origins"]
+        entry["explore"] = r["topic_code"] in explore_codes
+        entry["eligible"] = r["origins"] >= cfg["min_origins"] and not entry["explore"]
         entry["passed"] = (not early) and entry["eligible"] and entry["score"] >= cfg["threshold"]
         scored.append(entry)
 
@@ -84,28 +91,31 @@ def compute(conn, day: str, settings: dict) -> dict:
     with conn:
         conn.execute("DELETE FROM topic_score WHERE date = ?", (day,))
         conn.executemany(
-            "INSERT INTO topic_score (topic_code, date, mode, z, accel, breadth, origins, score, rank, passed) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO topic_score (topic_code, date, mode, z, accel, breadth, origins, score, rank, passed, explore) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(e["code"], day, "early" if early else "score", e["z"], e["accel"], e["breadth"], e["origins"],
-              e["score"], e["rank"], int(e["passed"])) for e in scored],
+              e["score"], e["rank"], int(e["passed"]), int(e["explore"])) for e in scored],
         )
     return {"mode": "early" if early else "score", "days": len(days), "need": cfg["baseline_days"],
-            "ranked": place, "passed": sum(e["passed"] for e in scored), "total": len(scored)}
+            "ranked": place, "passed": sum(e["passed"] for e in scored), "total": len(scored),
+            "explore": sum(e["explore"] for e in scored)}
 
 
 def explore_picks(conn, day: str, settings: dict, exclude: set[str]) -> list[str]:
-    """탐색 슬롯: 순위와 상관없이 무작위로 뽑은 주제 번호들(명세 6번).
+    """탐색 슬롯(명세 6번): 탐색으로 모은 주제(명세 2번) 중에서 무작위로 explore_n 개.
 
-    고르는 규칙은 명세의 열린 항목이라 시작값으로 정했다: 위에 이미 나온 주제를 빼고, 오늘 순위가
-    explore_skip_top 위 밖인 주제 중에서 날짜를 씨앗으로 고르게 뽑는다(같은 날 다시 만들어도 같다).
-    그 밖의 주제가 모자라면 위에 이미 나온 것만 빼고 나머지에서 채운다.
-    첫 번째 것이 Top 5의 다섯째 자리에 오른다.
+    날짜를 씨앗으로 뽑아 같은 날 다시 만들어도 같다. 첫 번째 것이 Top 5의 다섯째 자리에 오른다
+    (그 1건을 고르는 더 나은 규칙은 명세 9번의 열린 항목이다).
+    탐색으로 모은 주제가 없는 날(탐색을 끈 경우 등)에는 순위 explore_skip_top 위 밖의 주제에서 뽑는다.
     """
     cfg = settings["score"]
-    rows = conn.execute(
-        "SELECT topic_code, rank FROM topic_score WHERE date = ? ORDER BY topic_code", (day,)
-    ).fetchall()
     rng = random.Random(day)
+    rows = conn.execute(
+        "SELECT topic_code, rank, explore FROM topic_score WHERE date = ? ORDER BY topic_code", (day,)
+    ).fetchall()
+    explored = [r["topic_code"] for r in rows if r["explore"] and r["topic_code"] not in exclude]
+    if explored:
+        return rng.sample(explored, min(cfg["explore_n"], len(explored)))
     outside = [r["topic_code"] for r in rows
                if r["topic_code"] not in exclude and (r["rank"] is None or r["rank"] > cfg["explore_skip_top"])]
     picks = rng.sample(outside, min(cfg["explore_n"], len(outside)))

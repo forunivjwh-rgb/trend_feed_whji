@@ -50,3 +50,17 @@ def collect(cfg: dict, fetch) -> CollectResult:
         if rec:
             records.append(rec)
     return CollectResult(records)
+
+
+def explore(cfg: dict, fetch, rng, n: int, exclude: set[str]) -> CollectResult:
+    """탐색(명세 2번): 인기 모델 위 limit 개 밖(limit+1 ~ explore_pool 위)에서 무작위로 n개."""
+    query = urlencode({"sort": "trendingScore", "direction": -1, "limit": cfg["explore_pool"]})
+    data = fetch.get_json(f"{cfg['api_base']}/models?{query}")[cfg["limit"]:]
+    candidates = [d for d in data if d.get("id") and d["id"] not in exclude and not d.get("private")]
+    records = []
+    for d in rng.sample(candidates, min(len(candidates), n)):
+        rec = to_record(d, rank=0)
+        if rec:
+            rec.rank = None
+            records.append(rec)
+    return CollectResult(records)

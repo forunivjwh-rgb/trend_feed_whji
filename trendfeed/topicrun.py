@@ -32,6 +32,8 @@ def run(conn, day: str, settings: dict, *, review: bool = True, client=None, say
             with conn:
                 db.save_llm_call(conn, day, created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
                                  purpose="topics", ref=day, model=settings["llm"]["model"], **usage)
-    found = topicstore.save_day(conn, day, found, settings)
+    # 탐색 글(명세 2번)은 묶지 않고 글 하나를 탐색 주제 하나로 둔다. 순위에는 오르지 않는다.
+    explored = topics.singletons(rank.now_popular(conn, day, settings, explore=True), settings)
+    found = topicstore.save_day(conn, day, found + explored, settings)
     summary = score.compute(conn, day, settings)
     return {"ok": True, "note": "", "review_notes": notes, "usage": usage, "found": found, "score": summary}
