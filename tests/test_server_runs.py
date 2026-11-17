@@ -96,9 +96,14 @@ class DropWarningTest(unittest.TestCase):
         self.settings["sources"]["hackernews"] = {**SETTINGS["sources"]["hackernews"], "limit": 2}
         self.assertEqual(self.run_day(12, range(1, 3))["status"], "ok")
 
-    def test_shipped_settings_have_the_rule(self):
+    def test_shipped_settings_leave_the_rule_off_until_decided(self):
         from trendfeed import config
-        self.assertEqual(config.load()["status"], self.STATUS)
+        self.assertEqual(config.load()["status"]["drop_ratio"], 0)  # 명세 9번: 실제 수집량을 본 뒤 정한다
+        self.settings["status"] = {**self.STATUS, "drop_ratio": 0}
+        for n in (10, 11, 12):
+            self.run_day(n, range(1, 11))
+        self.settings["sources"]["hackernews"] = {**SETTINGS["sources"]["hackernews"], "limit": 2}
+        self.assertEqual(self.run_day(13, range(1, 3))["status"], "ok")
 
 
 if __name__ == "__main__":

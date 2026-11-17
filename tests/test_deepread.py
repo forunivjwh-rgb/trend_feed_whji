@@ -160,8 +160,12 @@ class DeepreadTest(unittest.TestCase):
             archive.export_day(self.conn, DAY, Path(tmp))
             fresh = db.connect(":memory:")
             self.addCleanup(fresh.close)
-            archive.import_all(fresh, Path(tmp))
-        self.assertEqual(feed.build(fresh, DAY, SETTINGS), html)
+            loose = {**SETTINGS, "score": {**SETTINGS["score"], "min_origins": 1}}  # make_topics 와 같은 조건
+            archive.import_all(fresh, Path(tmp), loose)
+        # 예전 방식 파일에는 주제 키워드가 없어 그것만 다르다. 요약·숫자는 그대로 옮겨진다.
+        restored = feed.build(fresh, DAY, SETTINGS)
+        for text in ("실탐 요약", "위키 문서다", "방송에 나와서", "읽은 범위: 문서 본문", "실탐 10건 · LLM 10회"):
+            self.assertIn(text, restored)
 
 
 class LlmSettingsTest(unittest.TestCase):

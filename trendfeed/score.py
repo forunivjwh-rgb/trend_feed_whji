@@ -7,7 +7,7 @@
 
 - 날은 "수집이 돈 날"로 센다. 그날 주제가 없으면 그날 어텐션은 0이다.
 - 기준선이 baseline_days(14일) 쌓이기 전에는 "지금 인기" 모드다: z와 가속을 끄고 오늘 어텐션 순으로만 매긴다.
-- 순위에는 출처가 min_origins 곳 이상인 주제만 오른다("지금 인기" 모드에서는 early_min_origins).
+- 순위에는 출처가 min_origins(3) 곳 이상인 주제만 오른다(명세 3번·5번). "지금 인기" 모드도 같다.
 - 점수가 threshold 이상이고 출처 조건도 맞으면 "임계 통과"다. "지금 인기" 모드에는 임계가 없다.
 """
 
@@ -67,8 +67,7 @@ def compute(conn, day: str, settings: dict) -> dict:
             entry["score"] = (min(max(st["z"], 0.0), cfg["z_cap"])
                               + cfg["accel_weight"] * math.log(max(st["accel"], 1.0))
                               + cfg["breadth_weight"] * (breadth - 1))
-        min_origins = cfg["early_min_origins"] if early else cfg["min_origins"]
-        entry["eligible"] = r["origins"] >= min_origins
+        entry["eligible"] = r["origins"] >= cfg["min_origins"]
         entry["passed"] = (not early) and entry["eligible"] and entry["score"] >= cfg["threshold"]
         scored.append(entry)
 

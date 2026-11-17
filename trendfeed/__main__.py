@@ -15,7 +15,7 @@ import subprocess
 import sys
 import webbrowser
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import archive, config, db, deepread, feed, feedback, rank, schedule, topicrun, topics, why
@@ -108,6 +108,8 @@ def _daily(settings: dict) -> int:
             f.write(text + "\n")
 
     say(f"--- {datetime.now().astimezone().isoformat(timespec='seconds')} 시작")
+    db.start_daily(db.connect(config.db_path(settings)), config.today(settings),
+                   datetime.now(timezone.utc).isoformat(timespec="seconds"))
     code = 0
     steps = (
         lambda: _collect(settings, None, say),
@@ -216,6 +218,8 @@ def _status(settings: dict, top: int) -> int:
 def _feed(settings: dict, day: str | None, open_page: bool, say=print) -> int:
     conn = db.connect(config.db_path(settings))
     day = day or conn.execute("SELECT MAX(date) FROM source_runs").fetchone()[0]
+    if day and conn.execute("SELECT 1 FROM daily_runs WHERE date = ? AND finished_at IS NULL", (day,)).fetchone():
+        db.finish_daily(conn, day, datetime.now(timezone.utc).isoformat(timespec="seconds"))
     if day is None:
         say("아직 저장된 것이 없습니다. 먼저 `python -m trendfeed collect` 를 돌려 주세요.")
         return 1

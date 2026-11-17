@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from collections import Counter
 
+from . import topics as topics_mod
+
 
 def _code(n: int) -> str:
     return f"T-{n:04d}"
@@ -22,6 +24,8 @@ def save_day(conn, day: str, found: list[dict], settings: dict) -> list[dict]:
     같은 날 다시 부르면 그날 치를 새로 쓴다(번호는 이어받는다).
     """
     sources = settings["sources"]
+    kw_n = settings["topics"]["keywords_n"]
+    stop = {w.lower() for w in settings["topics"]["keyword_stopwords"]}
     with conn:
         # 항목마다 가장 최근에 속했던 주제(오늘 앞선 실행 포함)
         prior = dict(conn.execute(
@@ -58,6 +62,9 @@ def save_day(conn, day: str, found: list[dict], settings: dict) -> list[dict]:
                     "UPDATE topics SET name = ?, aliases = ?, named_by_llm = ? WHERE code = ?",
                     (name, json.dumps(aliases, ensure_ascii=False), int(row["named_by_llm"] or t["named_by_llm"]), code),
                 )
+            keywords = topics_mod.keywords_of(t["items"], kw_n, stop)
+            conn.execute("UPDATE topics SET keywords = ? WHERE code = ?", (json.dumps(keywords, ensure_ascii=False), code))
+            t["keywords"] = keywords
             taken.add(code)
             by_platform: dict[str, float] = {}
             for e in t["items"]:

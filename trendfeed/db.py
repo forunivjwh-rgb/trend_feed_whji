@@ -87,7 +87,14 @@ CREATE TABLE IF NOT EXISTS topics (
     field         TEXT NOT NULL,        -- 분야
     aliases       TEXT NOT NULL DEFAULT '[]',   -- 같은 주제에 붙었던 다른 이름들 (JSON)
     first_seen    TEXT NOT NULL,        -- 처음 나타난 날
-    named_by_llm  INTEGER NOT NULL DEFAULT 0    -- 0이면 이름이 임시(가장 큰 항목의 제목)
+    named_by_llm  INTEGER NOT NULL DEFAULT 0,   -- 0이면 이름이 임시(가장 큰 항목의 제목)
+    keywords      TEXT NOT NULL DEFAULT '[]'    -- 주제 글 제목에서 코드가 뽑은 낱말 (JSON)
+);
+
+CREATE TABLE IF NOT EXISTS daily_runs (
+    date         TEXT PRIMARY KEY,
+    started_at   TEXT NOT NULL,         -- 그날 매일 실행이 시작한 시각 (UTC)
+    finished_at  TEXT                   -- 끝난 시각 (피드를 쓸 때 적는다)
 );
 
 CREATE TABLE IF NOT EXISTS topic_items (
@@ -134,9 +141,17 @@ CREATE TABLE IF NOT EXISTS topic_score (
     score       REAL,
     rank        INTEGER,                -- 순위. 출처 조건을 못 채우면 비어 있다
     passed      INTEGER NOT NULL,       -- 임계 통과 여부
+    explore     INTEGER NOT NULL DEFAULT 0,  -- 1: 탐색 슬롯에서 온 주제(순위와 따로 센다)
     PRIMARY KEY (topic_code, date)
 );
 """
+
+
+# 나중에 더한 칸: 예전 저장 파일을 열 때 없으면 더한다 (표, 칸, 정의)
+_ADDED_COLUMNS = [
+    ("topics", "keywords", "TEXT NOT NULL DEFAULT '[]'"),
+    ("topic_score", "explore", "INTEGER NOT NULL DEFAULT 0"),
+]
 
 
 def connect(path: Path | str) -> sqlite3.Connection:
@@ -145,6 +160,11 @@ def connect(path: Path | str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    for table, column, ddl in _ADDED_COLUMNS:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    conn.commit()
     return conn
 
 
@@ -250,3 +270,14 @@ def save_run(
         """,
         (day, source, item_count, followed_count, status, memo, started_at, round(duration_sec, 1)),
     )
+
+
+def start_daily(conn, day: str, started_at: str) -> None:
+    conn.execute("INSERT OR REPLACE INTO daily_runs (date, started_at, finished_at) VALUES (?, ?, NULL)",
+                 (day, started_at))
+    conn.commit()
+
+
+def finish_daily(conn, day: str, finished_at: str) -> None:
+    conn.execute("UPDATE daily_runs SET finished_at = ? WHERE date = ?", (finished_at, day))
+    conn.commit()

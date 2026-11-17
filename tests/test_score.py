@@ -55,12 +55,14 @@ class ComputeTest(unittest.TestCase):
     def ranks(self, day):
         return {r["topic_code"]: dict(r) for r in self.conn.execute("SELECT * FROM topic_score WHERE date = ?", (day,))}
 
-    def test_early_mode_ranks_by_attention_and_needs_one_origin(self):
-        day = self.add_day(1, {"T-0001": (2.0, ["HN"], 1), "T-0002": (5.0, ["HN", "GN"], 2)})
+    def test_early_mode_ranks_by_attention_and_still_needs_three_origins(self):
+        day = self.add_day(1, {"T-0001": (2.0, ["HN"], 3), "T-0002": (5.0, ["HN", "GN"], 4),
+                               "T-0003": (9.0, ["YT"], 2)})
         summary = score.compute(self.conn, day, SETTINGS)
         self.assertEqual((summary["mode"], summary["days"], summary["ranked"], summary["passed"]), ("early", 1, 2, 0))
         r = self.ranks(day)
         self.assertEqual((r["T-0002"]["rank"], r["T-0001"]["rank"]), (1, 2))
+        self.assertIsNone(r["T-0003"]["rank"])  # 어텐션이 가장 커도 출처 2곳이면 순위 밖(명세 3번)
         self.assertIsNone(r["T-0002"]["score"])
         self.assertEqual(r["T-0002"]["breadth"], 2)
 
@@ -99,13 +101,13 @@ class ComputeTest(unittest.TestCase):
         self.assertEqual(score.run_days(self.conn, day_of(2)), [day])
 
     def test_rerun_replaces_the_days_scores(self):
-        day = self.add_day(1, {"T-0001": (2.0, ["HN"], 1)})
+        day = self.add_day(1, {"T-0001": (2.0, ["HN"], 3)})
         score.compute(self.conn, day, SETTINGS)
         score.compute(self.conn, day, SETTINGS)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM topic_score").fetchone()[0], 1)
 
     def test_explore_picks_skip_the_top_and_are_stable_for_the_day(self):
-        day = self.add_day(1, {f"T-{i:04d}": (100.0 - i, ["HN"], 1) for i in range(1, 41)})
+        day = self.add_day(1, {f"T-{i:04d}": (100.0 - i, ["HN"], 3) for i in range(1, 41)})
         score.compute(self.conn, day, SETTINGS)
         picks = score.explore_picks(self.conn, day, SETTINGS, exclude={"T-0030"})
         self.assertEqual(len(picks), 5)
