@@ -1,9 +1,9 @@
 """실탐(깊게 읽기) — "그게 뭔데?"에 답하는 단계 (명세 6번).
 
-순위가 높은 주제마다 대표 글 하나의 원문을 읽고 LLM으로 요약한다. 숫자와 순위는 이미 코드가 계산했다.
-점수 모드에서는 임계를 넘은 주제를 먼저 읽는다.
+메타데이터로 순위를 매긴 뒤(코드), 어텐션이 높은 주제만 원문을 읽고 LLM으로 요약한다.
+주제마다 대표·발단·최다 논의 1~3건을 읽고 LLM은 주제당 1번. 시간이 남으면 탐색 슬롯을 읽는다.
 
-임시인 곳: 읽는 도구는 명세의 Agent Reach 대신 각 소스의 공개 주소에서 직접 읽는다.
+읽는 도구: 지금은 각 소스의 공개 주소에서 직접 읽는다. Agent Reach는 다음 단계에서 붙인다.
 읽은 원문은 요약에만 쓰고 저장하지 않는다. 남는 것은 요약과 "어디까지 읽었나"뿐이다.
 """
 
@@ -126,9 +126,15 @@ READERS = {
 
 
 def run(conn, day: str, settings: dict, fetch, client=None, say=print) -> dict:
-    """오늘의 실탐. 결과 요약(읽은 건수 등)을 돌려준다. LLM을 못 쓰면 이 단계만 건너뛴다."""
-    cfg, llm_cfg, sources = settings["deepread"], settings["llm"], settings["sources"]
-    result = {"read": 0, "skipped": 0, "failed": 0, "note": ""}
+    """오늘의 실탐(명세 6번). 결과 요약을 돌려준다. LLM을 못 쓰면 이 단계만 건너뛴다.
+
+    1. 읽을 주제: 점수 모드에서는 임계를 넘은 주제, "지금 인기" 모드에서는 어텐션이 높은 주제(위 top_n 개).
+    2. 주제마다 대표·발단·최다 논의 중 1~3건을 읽고, 주제 하나에 LLM 1회로 요약한다.
+    3. 시간 예산이 남으면 탐색 슬롯의 주제를 읽는다.
+    같은 주제는 7일 안에 다시 읽지 않는다. 읽은 원문은 요약에만 쓰고 저장하지 않는다.
+    """
+    cfg = settings["deepread"]
+    result = {"read": 0, "explore_read": 0, "skipped": 0, "failed": 0, "note": ""}
     if not cfg["enabled"]:
         result["note"] = "실탐이 설정에서 꺼져 있음"
         return result
@@ -142,75 +148,94 @@ def run(conn, day: str, settings: dict, fetch, client=None, say=print) -> dict:
 
     since = (date.fromisoformat(day) - timedelta(days=cfg["no_reread_days"])).isoformat()
     recent = {r[0] for r in conn.execute("SELECT item_id FROM deepreads WHERE date > ?", (since,))}
-    recent_topics = {r[0] for r in conn.execute(
-        "SELECT DISTINCT m.topic_code FROM deepreads d JOIN topic_items m ON m.item_id = d.item_id "
-        "WHERE d.date > ? AND m.date = ?", (since, day))}
     deadline = time.monotonic() + cfg["budget_minutes"] * 60
-    for e in _targets(conn, day, settings, recent, recent_topics, result):
-        reader = READERS[sources[e["source"]].get("module", e["source"])]
-        if time.monotonic() > deadline:
-            result["note"] = f"시간 예산 {cfg['budget_minutes']}분을 다 써서 멈춤"
+    main, explore = _targets(conn, day, settings, recent, result)
+    for group, key in ((main, "read"), (explore if cfg["read_explore"] else [], "explore_read")):
+        for code, name, picks in group:
+            if time.monotonic() > deadline:
+                result["note"] = f"시간 예산 {cfg['budget_minutes']}분을 다 써서 멈춤"
+                break
+            outcome = _read_topic(conn, day, settings, fetch, client, name, picks)
+            if isinstance(outcome, Exception):
+                result["note"] = f"{llm.explain_error(outcome)} — 남은 실탐은 건너뜀"
+                break
+            result[key if outcome == "ok" else "failed"] += 1
+        if result["note"]:
             break
-        if result["read"] or result["failed"]:
-            time.sleep(cfg["pause_sec"])  # 같은 곳을 연달아 두드리지 않는다
-        try:
-            material, scope = reader(e, cfg, sources, fetch)
-        except Exception:
-            material, scope = "", ""
-        if len(material) < cfg["min_chars"]:
-            result["failed"] += 1  # 원문을 못 읽었으면 지어내지 않고 넘어간다
-            continue
-        try:
-            summary, usage = llm.summarize(client, llm_cfg, e["title"], material)
-        except Exception as err:
-            result["note"] = f"{llm.explain_error(err)} — 남은 실탐은 건너뜀"
-            break
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        with conn:
-            db.save_llm_call(conn, day, created_at=now, purpose="deepread",
-                             ref=f"{e['source']}:{e['external_id']}", model=llm_cfg["model"], **usage)
-            if summary:
-                db.save_deepread(conn, day, e["item_id"], scope=scope, model=llm_cfg["model"], **summary)
-        if summary:
-            result["read"] += 1
-        else:
-            result["failed"] += 1
-    say(f"  실탐: 요약 {result['read']}건 · 건너뜀 {result['skipped']}건 · 실패 {result['failed']}건"
-        + (f" — {result['note']}" if result["note"] else ""))
+    say(f"  실탐: 요약 {result['read']}건 · 탐색 슬롯 {result['explore_read']}건 · 건너뜀 {result['skipped']}건"
+        f" · 실패 {result['failed']}건" + (f" — {result['note']}" if result["note"] else ""))
     return result
 
 
-def _targets(conn, day: str, settings: dict, recent: set, recent_topics: set, result: dict) -> list[dict]:
-    """읽을 글: 순위가 높은 주제부터(점수 모드에서는 임계 통과 주제 먼저) 주제마다 대표 글 하나.
+def _read_topic(conn, day, settings, fetch, client, name: str, picks: list[tuple[str, dict]]):
+    """주제 하나: 고른 글들을 읽고 LLM 1회로 요약해 저장한다. "ok" | "failed" | LLM 오류(그날 실탐을 멈춤)."""
+    cfg, llm_cfg, sources = settings["deepread"], settings["llm"], settings["sources"]
+    parts, scopes = [], []
+    for k, (role, e) in enumerate(picks):
+        if k:
+            time.sleep(cfg["pause_sec"])  # 같은 곳을 연달아 두드리지 않는다
+        try:
+            material, scope = READERS[sources[e["source"]].get("module", e["source"])](e, cfg, sources, fetch)
+        except Exception:
+            material, scope = "", ""
+        if material.strip():
+            label = sources[e["source"]]["label"]
+            parts.append(f"[{role} · {label}] {e['title']}\n{material}")
+            scopes.append(f"{role} {scope}" if scope else role)
+    material = "\n\n".join(parts)
+    if len(material) < cfg["min_chars"]:
+        return "failed"  # 원문을 못 읽었으면 지어내지 않고 넘어간다
+    try:
+        summary, usage = llm.summarize(client, llm_cfg, name, material)
+    except Exception as err:
+        return err
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    lead = picks[0][1]
+    with conn:
+        db.save_llm_call(conn, day, created_at=now, purpose="deepread",
+                         ref=f"{lead['source']}:{lead['external_id']}", model=llm_cfg["model"], **usage)
+        if summary:
+            db.save_deepread(conn, day, lead["item_id"], scope=" · ".join(scopes), model=llm_cfg["model"], **summary)
+    return "ok" if summary else "failed"
 
-    대표 글은 그 주제에서 읽는 법이 있는 소스의 글 중 어텐션이 가장 큰 것이다. 같은 주제를 7일 안에
-    이미 읽었으면 건너뛴다(명세 6번 재탐색 금지). 주제 단계가 돌지 않은 날은 글 순위를 그대로 쓴다.
+
+def _targets(conn, day: str, settings: dict, recent: set, result: dict):
+    """(읽을 순위 주제들, 시간이 남으면 읽을 탐색 주제들). 각각 (번호, 이름, [(역할, 글), ...]).
+
+    순위 주제: 점수 모드에서는 임계 통과 주제만, "지금 인기" 모드에서는 순위 위 top_n 개.
+    주제마다 대표·발단·최다 논의 중 읽는 법이 있는 소스의 글 1~3건을 고른다(topics.evidence).
     """
+    from . import score, topics
+
     cfg, sources = settings["deepread"], settings["sources"]
-    entries = {e["item_id"]: e for e in rank.now_popular(conn, day, settings)}
+    entries = {e["item_id"]: e for e in rank.now_popular(conn, day, settings)
+               + rank.now_popular(conn, day, settings, explore=True)}
     readable = {k for k, v in sources.items() if v.get("module", k) in READERS}
-    rows = conn.execute(
-        "SELECT topic_code, passed FROM topic_score WHERE date = ? AND rank IS NOT NULL ORDER BY passed DESC, rank",
-        (day,),
-    ).fetchall()
-    if not rows:  # 주제가 없으면 글 하나를 주제 하나처럼 본다
-        groups = [("", [e]) for e in sorted(entries.values(), key=lambda e: e["place"])]
+    members: dict[str, list[dict]] = {}
+    for item_id, code in conn.execute("SELECT item_id, topic_code FROM topic_items WHERE date = ?", (day,)):
+        if item_id in entries:
+            members.setdefault(code, []).append(entries[item_id])
+    names = dict(conn.execute("SELECT code, name FROM topics"))
+    mode = conn.execute("SELECT mode FROM topic_score WHERE date = ? LIMIT 1", (day,)).fetchone()
+    if mode and mode[0] == "score":
+        rows = conn.execute("SELECT topic_code FROM topic_score WHERE date = ? AND passed = 1 ORDER BY rank", (day,))
     else:
-        members: dict[str, list[dict]] = {}
-        for item_id, code in conn.execute("SELECT item_id, topic_code FROM topic_items WHERE date = ?", (day,)):
-            if item_id in entries:
-                members.setdefault(code, []).append(entries[item_id])
-        groups = [(r["topic_code"], members.get(r["topic_code"], [])) for r in rows]
-    picked, considered = [], 0
-    for code, items in groups:
-        if considered >= cfg["top_n"]:
-            break  # 위 top_n 개 주제만 본다(하루 여러 번 돌아도 새로 오른 주제만 더 읽는다)
-        candidates = sorted((e for e in items if e["source"] in readable), key=lambda e: -e["attention"])
-        if not candidates:
-            continue  # 읽는 법이 있는 소스의 글이 없는 주제(유튜브만 있는 주제 등)는 세지 않는다
-        considered += 1
-        if (code and code in recent_topics) or any(e["item_id"] in recent for e in items):
-            result["skipped"] += 1  # 7일 안에 이미 읽은 주제
-            continue
-        picked.append(candidates[0])
-    return picked
+        rows = conn.execute("SELECT topic_code FROM topic_score WHERE date = ? AND rank IS NOT NULL ORDER BY rank "
+                            "LIMIT ?", (day, cfg["top_n"]))
+    ranked_codes = [r[0] for r in rows]
+    explore_codes = score.explore_picks(conn, day, settings, set(ranked_codes))
+
+    def plan(codes, n_items):
+        out = []
+        for code in codes:
+            items = members.get(code, [])
+            if any(e["item_id"] in recent for e in items):
+                result["skipped"] += 1  # 7일 안에 이미 읽은 주제(명세 6번 재탐색 금지)
+                continue
+            picks = [(role, e) for role, e in topics.evidence(
+                [e for e in items if e["source"] in readable], n_items) if role in topics.ROLES]
+            if picks:
+                out.append((code, names.get(code, picks[0][1]["title"]), picks))
+        return out
+
+    return plan(ranked_codes, cfg["items_per_topic"]), plan(explore_codes, 1)

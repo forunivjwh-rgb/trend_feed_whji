@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import config, db, feedback, llm, rank, rollup, score
+from . import config, db, feedback, llm, rank, rollup, score, topics
 from .run import STATUS_LABEL
 
 CSS = """
@@ -115,6 +115,15 @@ def _link(e: dict) -> str:
     return title
 
 
+def _platform_labels(sources: dict) -> dict:
+    """플랫폼 기호 → 이름. 위키백과 한국어·영어처럼 한 플랫폼에 소스가 둘이면 괄호 앞 이름만 쓴다."""
+    out: dict[str, str] = {}
+    for s in sources.values():
+        if "code" in s:
+            out[s["code"]] = s["label"] if s["code"] not in out else s["label"].split(" (")[0]
+    return out
+
+
 def _dots(codes, sources_by_code: dict) -> str:
     return "".join(
         f'<span class="row small" style="gap:6px"><span class="dot" data-p="{escape(c)}"></span>{escape(sources_by_code.get(c, c))}</span>'
@@ -158,24 +167,7 @@ def _curve(points: list[float]) -> str:
 
 
 def _evidence(items: list[dict], n: int) -> list[tuple[str, dict]]:
-    """근거 항목: 대표(어텐션이 가장 큰 것) · 발단(가장 먼저 나온 것) · 최다 논의(댓글이 가장 많은 것)."""
-    picked, used = [], set()
-
-    def take(role, item):
-        if item is not None and item["item_id"] not in used and len(picked) < n:
-            picked.append((role, item))
-            used.add(item["item_id"])
-
-    take("대표", max(items, key=lambda e: e["attention"]))
-    rest = [e for e in items if e["item_id"] not in used]
-    if rest:
-        take("발단", min(rest, key=lambda e: (e["published_at"] or e["first_seen"] + "T23:59:59", e["item_id"])))
-    rest = [e for e in items if e["item_id"] not in used and e.get("comments")]
-    if rest:
-        take("최다 논의", max(rest, key=lambda e: e["comments"]))
-    for e in sorted(items, key=lambda e: -e["attention"]):
-        take("함께", e)
-    return picked
+    return topics.evidence(items, n)
 
 
 def _ev_html(role: str, e: dict, sources: dict) -> str:
@@ -212,7 +204,7 @@ def _mark(t: dict, settings: dict, day: str) -> str:
 
 
 def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "") -> str:
-    by_code = {s["code"]: s["label"] for s in sources.values() if "code" in s}
+    by_code = _platform_labels(sources)
     if t["mode"] == "early" or t["score"] is None:
         big_label, big = "오늘 어텐션", f"{t['attention']:.1f}"
         nums = [("오늘 어텐션", f"{t['attention']:.1f}"), ("플랫폼 폭", f"{t['breadth']}곳"),
@@ -263,7 +255,7 @@ def _card(t: dict, place: int, sources: dict, cfg: dict, mark: str = "") -> str:
 
 
 def _row(t: dict, sources: dict, chip: str = "") -> str:
-    by_code = {s["code"]: s["label"] for s in sources.values() if "code" in s}
+    by_code = _platform_labels(sources)
     value = f"점수 {t['score']:.1f}" if t["score"] is not None else f"어텐션 {t['attention']:.1f}"
     rank_txt = f"#{t['rank']}" if t["rank"] else "순위 밖"
     read = '<span class="chip">실탐</span>' if t.get("deepread") else '<span class="chip">메타만</span>'
@@ -298,7 +290,7 @@ def _multi_curve(curves: dict[str, list[float]]) -> str:
 def _rollups(conn, day: str, settings: dict, top_code: str | None) -> str:
     """롤업 구역(명세 7번). 점수 모드에서만 부른다."""
     cfg = settings["rollup"]
-    by_code = {s["code"]: s["label"] for s in settings["sources"].values() if "code" in s}
+    by_code = _platform_labels(settings["sources"])
     d, w, m = rollup.daily(conn, day, cfg), rollup.weekly(conn, day, cfg), rollup.monthly(conn, day, top_code, cfg)
 
     def rank_txt(r):
