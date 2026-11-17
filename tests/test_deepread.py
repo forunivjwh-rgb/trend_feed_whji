@@ -117,6 +117,9 @@ class DeepreadTest(unittest.TestCase):
         client = FakeClient()
         result = self.run_it(client, fetch=Fetch(fail=True))
         self.assertEqual((result["read"], result["failed"], len(client.calls)), (0, 10, 0))
+        # 피드 맨 아래 한 줄: 직접 읽기 실패 몇 건/몇 건 중
+        self.assertEqual((result["direct"], result["direct_failed"]), (10, 10))
+        self.assertIn("직접 읽기 실패 10건/10건 중", feed.build(self.conn, DAY, SETTINGS))
 
     def test_refusal_or_cut_off_answer_stores_no_summary_but_counts_usage(self):
         result = self.run_it(FakeClient(stop_reason="refusal"))

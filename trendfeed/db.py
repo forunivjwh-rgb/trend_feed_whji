@@ -152,6 +152,8 @@ _ADDED_COLUMNS = [
     ("topics", "keywords", "TEXT NOT NULL DEFAULT '[]'"),
     ("topic_score", "explore", "INTEGER NOT NULL DEFAULT 0"),
     ("daily_runs", "deepread_tool", "TEXT NOT NULL DEFAULT ''"),  # 그날 실탐에 쓴 도구와 막힌 곳 한 줄
+    ("daily_runs", "direct_reads", "INTEGER NOT NULL DEFAULT 0"),  # 실탐에서 공개 주소로 직접 읽은 글 수
+    ("daily_runs", "direct_fails", "INTEGER NOT NULL DEFAULT 0"),  # 그중 못 읽은 수
 ]
 
 
@@ -290,9 +292,11 @@ def start_daily(conn, day: str, started_at: str) -> None:
     conn.commit()
 
 
-def save_deepread_tool(conn, day: str, text: str) -> None:
+def save_deepread_tool(conn, day: str, text: str, direct: int = 0, direct_failed: int = 0) -> None:
+    """그날 실탐 도구 한 줄과 직접 읽기 횟수. 같은 날 다시 돌리면 직접 읽기 횟수는 더한다."""
     conn.execute("INSERT OR IGNORE INTO daily_runs (date, started_at) VALUES (?, ?)", (day, ""))
-    conn.execute("UPDATE daily_runs SET deepread_tool = ? WHERE date = ?", (text, day))
+    conn.execute("UPDATE daily_runs SET deepread_tool = ?, direct_reads = direct_reads + ?, "
+                 "direct_fails = direct_fails + ? WHERE date = ?", (text, direct, direct_failed, day))
     conn.commit()
 
 

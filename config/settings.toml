@@ -77,7 +77,9 @@ accel_long_days = 14         #       이만큼의 평균으로 나눈다(오늘 
 accel_weight = 1.5           # 가속 가중
 breadth_weight = 0.5         # 플랫폼 폭 가중
 threshold = 5.0              # 임계: 이 점수 이상이면 "임계 통과"(실탐 우선 대상)
-min_origins = 3              # 출처가 이 수 미만인 주제는 순위에 올리지 않는다("지금 인기" 모드도 같다)
+min_origins = 2              # 출처가 이 수 미만인 주제는 순위에 올리지 않는다("지금 인기" 모드도 같다)
+                             # 명세 시작값은 3. 실제 자료에서 3곳 이상이 너무 적어 2로 시작(2026-11-17 사용자 결정, 2주 뒤 다시 조정)
+multi_origin_badge = 3       # 출처가 이 수 이상이면 피드에 "여러 곳에서 동시에 뜸" 표시
 explore_n = 5                # 탐색 슬롯에 무작위로 뽑는 주제 수 (명세 6번)
 explore_skip_top = 20        # 탐색은 순위가 이 위 밖인 주제 중에서 뽑는다(제안)
 
@@ -131,6 +133,9 @@ timeout_sec = 120            # 한 번 부를 때 기다리는 최대 시간(초
 # "web"(HN 링크 원문·모델 카드·위키 본문)은 읽을 주소를 바깥 서비스(Jina·Exa)에 보내므로, 사용자가 정하기 전까지 뺀다.
 channels = ["youtube", "github"]
 subtitle_langs = "ko,en,ko-orig,en-orig"   # 유튜브 자막 언어(앞쪽을 먼저)
+# 이미 알려진 한계 [채널, 오류]. 점검에서 이것만 안 되면 "주의"(노란색)로 두고, 그 밖의 실패만 빨간 × 로 한다.
+# 유튜브는 GitHub Actions 서버 주소에 "로봇 아님 확인"을 요구한다(2026-11-17 점검).
+known_limits = [["youtube", "PLATFORM_BLOCKED"]]
 check_samples = [
   ["youtube", "subtitle", ["https://www.youtube.com/watch?v=jNQXAC9IVRw", "--lang", "en"]],
   ["github", "read", ["yt-dlp/yt-dlp", "--backend", "github-api"]],

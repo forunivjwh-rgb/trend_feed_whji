@@ -76,6 +76,14 @@ class FeedTest(unittest.TestCase):
         self.assertIn("무작위 추첨으로 올라왔어요", cards[0])
         self.assertNotIn("지금 인기</span>", cards[0])
 
+    def test_multi_source_badge_follows_the_setting(self):
+        # 출처가 설정의 multi_origin_badge 곳 이상인 주제에만 "여러 곳에서 동시에 뜸" 표시
+        self.assertNotIn("여러 곳에서 동시에 뜸", feed.build(self.conn, "2026-11-17", self.settings))  # 시험 주제는 모두 출처 1곳
+        low = {**self.settings, "score": {**self.settings["score"], "multi_origin_badge": 1}}
+        html = feed.build(self.conn, "2026-11-17", low)
+        cards = html.split('<article class="card">')[1:]
+        self.assertTrue(all("여러 곳에서 동시에 뜸 · 출처 1곳" in c for c in cards))
+
     def test_fallback_without_the_grouping_tool_still_makes_topics(self):
         self.assertTrue(self.step["ok"])
         self.assertIn("글 하나를 주제 하나로 둠", self.step["review_notes"][0])
